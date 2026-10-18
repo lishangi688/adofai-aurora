@@ -313,7 +313,7 @@ public sealed class GitHubUpdateService
             return false;
         }
 
-        return local is null || KernelService.CompareVersions(remote, local) > 0;
+        return local is null || VersionScheme.Compare(remote, local) > 0;
     }
 
     private static async Task<string> GetStringAsync(string url, CancellationToken ct, bool gitHubApi = false)

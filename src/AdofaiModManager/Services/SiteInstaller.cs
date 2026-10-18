@@ -14,7 +14,9 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
         IProgress<int>? progress = null,
         CancellationToken ct = default)
     {
-        return InstallAsync(detail, detail.PreferredFile, detail.LatestVersion?.VersionId, progress, ct);
+        var version = ModFileSelector.PickLatestVersion(detail);
+        var file = ModFileSelector.Pick(version, modService.Environment) ?? detail.PreferredFile;
+        return InstallAsync(detail, file, version?.VersionId, progress, ct);
     }
 
     public async Task<InstallResult> InstallAsync(

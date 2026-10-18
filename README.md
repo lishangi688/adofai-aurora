@@ -2,7 +2,7 @@
 
 《冰与火之舞》（A Dance of Fire and Ice）的 Windows Mod 管理器。
 
-Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索、安装和检查更新，同时提供本地 Mod 管理和 UnityModManager 加载器维护功能。界面以中文为主，默认连接 ADOFAI Tools，也支持 modrift、TUF、modlist 和兼容接口的自定义站点。
+Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索、安装和检查更新，同时提供本地 Mod 管理和 UnityModManager / MelonLoader / BepInEx 加载器维护功能。界面以中文为主，默认连接 ADOFAI Tools，也支持 modrift、TUF、modlist 和兼容接口的自定义站点。
 
 > 项目原名 ADOFAI Mod Manager（AMM），从 v0.1.6 起更名为 Aurora，以避免与另一个同名工具混淆。
 >
@@ -14,11 +14,12 @@ Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索�
 
 - 切换 ADOFAI Tools、modrift、TUF、modlist 和自定义来源
 - 浏览、搜索、排序和分类筛选 Mod，具体选项取决于来源支持的功能
+- 以 Markdown 显示 Mod 介绍、更新说明（标题、列表、代码、链接、表格）
 - 查看 Mod 介绍和版本，安装指定版本
 - 识别已安装和可更新的 Mod
 - 显示来源信息及原站页面链接
 - 安装前校验下载内容，避免将网页等错误内容当作压缩包
-- 标注需要 MelonLoader 的 Mod；目前不支持这类 Mod 的自动安装，也不安装 MelonLoader 加载器
+- 标注需要 MelonLoader / BepInEx 的 Mod；可在「加载器」页安装对应加载器（UMM + MelonLoader 需要 UMMBridge）
 
 ### 已安装 Mod
 
@@ -28,9 +29,14 @@ Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索�
 - 从多个来源检查更新
 - 检测重复安装，减少更新后留下旧副本的情况
 
-### UMM 环境
+### 加载器环境
 
-- 检测、安装、修复和卸载 UnityModManager 加载器
+- 检测和管理 UnityModManager、MelonLoader、BepInEx
+- 首次使用或没有加载器时，按 PCL 风格选择加载器并安装对应版本
+- 支持 MelonLoader + UnityModManager：通过 UMMBridge 兼容层让两者共存
+- 使用 UMMBridge 时自动把 UMM mod 放在 `UMMMods`，切换回 UMM 时自动移回 `Mods`
+- 检测同一个 Mod 同时安装在 UMM 和 MelonLoader 的情况，提示重复加载风险（UMMBridge 下可能导致游戏崩溃）
+- 按加载器分组显示已安装 Mod，并分别从 `Mods`、`UMMMods`、`BepInEx/plugins` 扫描
 - 单独更新或回滚 UMM loader
 - 使用内置文件、资源站下载或本地导入的加载器文件
 - 通过 Steam 或直接运行游戏程序启动游戏
@@ -65,7 +71,7 @@ Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索�
 
 ## 第一次使用
 
-首次启动向导会引导你完成游戏目录、资源站和 UMM 环境的基本配置。完成后，在“在线 Mod”页面右上角选择来源，即可开始查找和安装 Mod。
+首次启动向导会引导你完成游戏目录、资源站和加载器的基本配置。加载器步骤会列出 UnityModManager、MelonLoader、BepInEx 及可选版本；没有加载器时会直接弹出选择框。完成后，在“在线 Mod”页面右上角选择来源，即可开始查找和安装 Mod。
 
 ## Mod 来源
 
@@ -121,6 +127,7 @@ powershell -ExecutionPolicy Bypass `
 - 感谢 [TUF（The Universal Forums）](https://tuforums.com/mods) 维护团队（[GitHub：T21C](https://github.com/T21C)）提供 Mod 目录、推荐与下载服务。Aurora 内展示的 TUF 数据会标注来源并回链到 TUF 站点。
 - 感谢 [modlist.org](https://modlist.org) 作者 square3ang 提供公开 API，并允许 Aurora 接入。相关项目见 [modlist-org](https://github.com/modlist-org)。
 - 感谢 [UnityModManager](https://github.com/newman55/unity-mod-manager) 及其作者 [newman55](https://github.com/newman55/) 提供加载器基础。
+- 感谢 [modlist-org/UMMBridge](https://github.com/modlist-org/UMMBridge) 提供 MelonLoader 下加载 UMM mod 的兼容层。
 
 ## 许可证
 
@@ -130,6 +137,7 @@ powershell -ExecutionPolicy Bypass `
 
 ```text
 src/AdofaiModManager/Resources/UmmLoader/
+src/AdofaiModManager/Resources/Markdig/
 ```
 
 ## 免责声明

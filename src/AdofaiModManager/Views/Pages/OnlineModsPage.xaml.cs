@@ -14,7 +14,7 @@ namespace AdofaiModManager.Views.Pages;
 
 public partial class OnlineModsPage : Page
 {
-    private readonly ObservableCollection<ModListItem> _mods = [];
+    private readonly RangeObservableCollection<ModListItem> _mods = [];
 
     private readonly HashSet<string> _installedIds = new(StringComparer.OrdinalIgnoreCase);
 
@@ -175,6 +175,9 @@ public partial class OnlineModsPage : Page
     /// <summary>资源站"后台补页"的代号：重新搜索/切来源时自增，旧的补页循环会自己退出。</summary>
     private int _siteFillId;
 
+    /// <summary>资源站主请求的代号：切来源/重新搜索时自增，旧请求结果直接丢弃。</summary>
+    private int _siteRequestId;
+
     private string CurrentFilterKey()
     {
         var sort = (SortCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
@@ -218,14 +221,24 @@ public partial class OnlineModsPage : Page
         return new ModService(gamePath);
     }
 
-    private void LoadInstalled()
+    private static readonly TimeSpan InstalledCacheTtl = TimeSpan.FromSeconds(5);
+    private DateTime _installedCacheAt = DateTime.MinValue;
+
+    private void LoadInstalled(bool force = false)
     {
+        if (!force && DateTime.UtcNow - _installedCacheAt < InstalledCacheTtl)
+        {
+            return;
+        }
+
         _installedIds.Clear();
         _installedVersions.Clear();
+        _installedByNormalized.Clear();
 
         var service = BuildModService();
         if (service is null)
         {
+            _installedCacheAt = DateTime.UtcNow;
             return;
         }
 
@@ -253,6 +266,8 @@ public partial class OnlineModsPage : Page
                 }
             }
         }
+
+        _installedCacheAt = DateTime.UtcNow;
     }
 
     private void ApplyLocalState(ModListItem item)
@@ -293,9 +308,18 @@ public partial class OnlineModsPage : Page
     /// <param name="append">true = 追加到列表末尾（滚动加载）；false = 重新搜索（清空重来）</param>
     private async Task FetchAsync(int page, bool append)
     {
-        if (_busy || (append && _allLoaded))
+        if (append && (_busy || _allLoaded))
         {
             return;
+        }
+
+        // 切来源 / 重新搜索时，允许直接取代正在进行的请求，而不是等旧请求超时。
+        if (!append)
+        {
+            _busy = false;
+            _remoteCts?.Cancel();
+            _siteFillId++;
+            _remoteRequestId++;
         }
 
         if (_remoteSource is { } remote)
@@ -303,6 +327,8 @@ public partial class OnlineModsPage : Page
             await FetchRemoteAsync(remote, page, append);
             return;
         }
+
+        var siteRequestId = ++_siteRequestId;
 
         var client = BuildClient(out var error);
         if (client is null)
@@ -342,6 +368,11 @@ public partial class OnlineModsPage : Page
 
             var result = await client.GetModsAsync(page, _pageSize, search, type, null, sort);
 
+            if (siteRequestId != _siteRequestId)
+            {
+                return;
+            }
+
             ApplySitePage(result, append, filterKey);
 
             SubtitleText.Text = _mods.Count == 0
@@ -357,12 +388,20 @@ public partial class OnlineModsPage : Page
         }
         catch (AdofaiToolsException ex)
         {
+            if (siteRequestId != _siteRequestId)
+            {
+                return;
+            }
+
             Report(false, ex.Message);
             SubtitleText.Text = ex.Message;
         }
         finally
         {
-            SetBusy(false);
+            if (siteRequestId == _siteRequestId)
+            {
+                SetBusy(false);
+            }
         }
     }
 
@@ -371,7 +410,6 @@ public partial class OnlineModsPage : Page
     {
         if (!append)
         {
-            _mods.Clear();
             _page = 1;
             _allLoaded = false;
         }
@@ -380,7 +418,9 @@ public partial class OnlineModsPage : Page
         _page = result.Page <= 0 ? Math.Max(1, _page) : result.Page;
         _total = result.Total;
 
-        var known = new HashSet<string>(_mods.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
+        var known = append
+            ? new HashSet<string>(_mods.Select(m => m.Id), StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 先算好每个条目的本地状态，再排序。
         // （原来是在 OrderBy 里顺手调用 ApplyLocalState，排序时状态还是上一轮的，
@@ -391,12 +431,19 @@ public partial class OnlineModsPage : Page
         }
 
         // 可更新的置顶（保持接口原始顺序，每页内部这样排）
-        foreach (var item in result.Items.OrderByDescending(i => i.LocalState == "可更新" ? 1 : 0))
+        var incoming = result.Items
+            .OrderByDescending(i => i.LocalState == "可更新" ? 1 : 0)
+            .Where(i => known.Add(i.Id))
+            .ToList();
+
+        // 整批通知 UI，避免一百多条逐个 Add 造成切换来源时卡顿。
+        if (append)
         {
-            if (known.Add(item.Id))
-            {
-                _mods.Add(item);
-            }
+            _mods.AddRange(incoming);
+        }
+        else
+        {
+            _mods.ReplaceRange(incoming);
         }
 
         _allLoaded = result.Items.Count == 0 || (_total > 0 && _mods.Count >= _total);
@@ -407,12 +454,26 @@ public partial class OnlineModsPage : Page
         }
 
         UpdateFooter();
-        _ = LoadIconsAsync(_mods.ToList());
+        _ = LoadIconsAsync(incoming);
 
         if (!append && _mods.Count > 0)
         {
-            ModList.SelectedIndex = 0;
+            SelectFirstItemDeferred();
         }
+    }
+
+    /// <summary>等列表先完成这一轮布局，再加载第一个详情，避免切来源时同时做太多事。</summary>
+    private void SelectFirstItemDeferred()
+    {
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                if (_mods.Count > 0)
+                {
+                    ModList.SelectedIndex = 0;
+                }
+            }),
+            System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>资源站：后台把剩余页补齐（会被新的搜索/切源打断）。</summary>
@@ -470,16 +531,28 @@ public partial class OnlineModsPage : Page
         }
     }
 
-    private static async Task LoadIconsAsync(IReadOnlyCollection<ModListItem> items)
+    private static readonly SemaphoreSlim IconLoadGate = new(6);
+
+    private static async Task LoadIconsAsync(IEnumerable<ModListItem> items)
     {
-        var tasks = items.Select(async item =>
-        {
-            var source = await ImageLoader.LoadAsync(item.IconUrl);
-            if (source is not null)
+        var tasks = items
+            .Where(item => item.IconSource is null && !string.IsNullOrWhiteSpace(item.IconUrl))
+            .Select(async item =>
             {
-                item.IconSource = source;
-            }
-        });
+                await IconLoadGate.WaitAsync();
+                try
+                {
+                    var source = await ImageLoader.LoadAsync(item.IconUrl);
+                    if (source is not null)
+                    {
+                        item.IconSource = source;
+                    }
+                }
+                finally
+                {
+                    IconLoadGate.Release();
+                }
+            });
 
         await Task.WhenAll(tasks);
     }
@@ -744,6 +817,10 @@ public partial class OnlineModsPage : Page
         _detail = null;
 
         _siteFillId++;      // 停掉上一次的后台补页
+        _siteRequestId++;   // 让旧资源站请求的结果失效
+        _remoteRequestId++; // 让旧第三方源请求的结果失效
+        _remoteCts?.Cancel();
+        _busy = false;
         _mods.Clear();
         _page = 1;
         _total = 0;
@@ -783,7 +860,6 @@ public partial class OnlineModsPage : Page
     {
         if (!append)
         {
-            _mods.Clear();
             _page = 1;
             _allLoaded = false;
         }
@@ -791,7 +867,10 @@ public partial class OnlineModsPage : Page
         _page = Math.Max(1, result.Page);
         _total = result.Total;
 
-        var known = new HashSet<string>(_mods.Select(m => m.Id), StringComparer.OrdinalIgnoreCase);
+        var known = append
+            ? new HashSet<string>(_mods.Select(m => m.Id), StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var incoming = new List<ModListItem>();
 
         foreach (var remote in result.Items)
         {
@@ -800,18 +879,27 @@ public partial class OnlineModsPage : Page
 
             if (known.Add(item.Id))
             {
-                _mods.Add(item);
+                incoming.Add(item);
             }
+        }
+
+        if (append)
+        {
+            _mods.AddRange(incoming);
+        }
+        else
+        {
+            _mods.ReplaceRange(incoming);
         }
 
         _allLoaded = result.Items.Count == 0 || (_total > 0 && _mods.Count >= _total);
 
         UpdateFooter();
-        _ = LoadIconsAsync(_mods.ToList());
+        _ = LoadIconsAsync(incoming);
 
         if (!append && _mods.Count > 0)
         {
-            ModList.SelectedIndex = 0;
+            SelectFirstItemDeferred();
         }
     }
 
@@ -1092,15 +1180,19 @@ public partial class OnlineModsPage : Page
         PopulateVersions(_detail);
 
         var melon = detail.Mod.Loader == ModLoader.MelonLoader;
+        var gamePath = AppServices.Settings.Settings.GamePath;
+        var melonReady = !melon ||
+                         (!string.IsNullOrWhiteSpace(gamePath) &&
+                          Directory.Exists(gamePath) &&
+                          GameLoaderEnvironment.Detect(gamePath).MelonLoaderInstalled);
 
-        // modrift 上混着资源包、着色器、插件等非 mod 条目：它们不是 UMM Mod，装不了。
-        // 别让用户点"安装"然后失败，直接说清楚、并引导去原站页面下载。
+        // modrift 上混着资源包、着色器、插件等非 mod 条目：它们不是可安装的 Mod 条目。
         var isMod = string.Equals(detail.Mod.ResourceType, "mod", StringComparison.OrdinalIgnoreCase);
 
-        InstallButton.IsEnabled = !melon && isMod;
+        InstallButton.IsEnabled = isMod && melonReady;
         InstallButton.Content = !isMod
             ? "不是 Mod"
-            : melon
+            : melon && !melonReady
                 ? "需要 MelonLoader"
                 : item.LocalState switch
                 {
@@ -1110,9 +1202,9 @@ public partial class OnlineModsPage : Page
                 };
 
         InstallStatusText.Text = !isMod
-            ? $"⚠ 这是 {source.DisplayName} 上的「{ResourceTypeLabel(detail.Mod.ResourceType)}」，不是 UnityModManager 的 Mod，Aurora 无法安装。可用上面的链接打开原站页面手动下载。"
-            : melon
-                ? "⚠ 这个 mod 需要 MelonLoader 加载器，Aurora 目前只支持 UMM，无法自动安装。可到该 mod 的发布页（简介里有链接）手动下载。"
+            ? $"⚠ 这是 {source.DisplayName} 上的「{ResourceTypeLabel(detail.Mod.ResourceType)}」，不是可直接安装的 Mod，Aurora 无法自动安装。可用上面的链接打开原站页面手动下载。"
+            : melon && !melonReady
+                ? "⚠ 这个 mod 需要 MelonLoader。请先到「加载器」页安装 MelonLoader（或 MelonLoader + UMMBridge），再回来安装。"
                 : string.Empty;
 
         // 收藏对所有来源都生效
@@ -1180,7 +1272,7 @@ public partial class OnlineModsPage : Page
 
             if (result.Success)
             {
-                LoadInstalled();
+                LoadInstalled(force: true);
 
                 foreach (var mod in _mods)
                 {
@@ -1345,7 +1437,9 @@ public partial class OnlineModsPage : Page
         }
 
         var selected = VersionCombo.SelectedItem as ModVersion;
-        var file = PreferredFileOf(selected) ?? _detail.PreferredFile;
+        var file = ModFileSelector.Pick(selected, service.Environment)
+                   ?? PreferredFileOf(selected)
+                   ?? _detail.PreferredFile;
         if (file is null)
         {
             Report(false, "该 mod 没有可下载的文件。");
@@ -1374,7 +1468,7 @@ public partial class OnlineModsPage : Page
             Report(result.Success, result.Message);
             InstallStatusText.Text = result.Message;
 
-            LoadInstalled();
+            LoadInstalled(force: true);
             foreach (var item in _mods)
             {
                 ApplyLocalState(item);
@@ -1474,7 +1568,11 @@ public partial class OnlineModsPage : Page
 
     private void Search_Click(object sender, RoutedEventArgs e) => _ = SearchAsync(1);
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) => _ = SearchAsync(1);
+    private void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        LoadInstalled(force: true);
+        _ = SearchAsync(1);
+    }
 
     private void LoadMore_Click(object sender, RoutedEventArgs e) => _ = LoadMoreAsync();
 

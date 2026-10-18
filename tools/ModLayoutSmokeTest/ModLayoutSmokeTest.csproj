@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>ModLayoutSmokeTest</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\AdofaiToolsModels.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\InstalledMod.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\ModLoaderKind.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\ModInfoJson.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\KernelManifest.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\AppPaths.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\DllLoaderInspector.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\DownloadService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\GameLoaderEnvironment.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\GameProcessGuard.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\InstallResult.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\KernelService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\LoaderInstallModels.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\LoaderSelectionRules.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\LoaderService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\ModFileSelector.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\ModService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\RangeObservableCollection.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\SteamGameLocator.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmBridgePackage.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmCompatConfig.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmParamsService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmModsMigrator.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\VersionScheme.cs" />
+  </ItemGroup>
+
+</Project>
+
+
+
+

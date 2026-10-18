@@ -16,6 +16,12 @@
     <Compile Include="Program.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\AppPaths.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\ModService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\DllLoaderInspector.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\DownloadService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\GameLoaderEnvironment.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\GameProcessGuard.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmBridgePackage.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\UmmCompatConfig.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\UmmParamsService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\InstallResult.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\SteamGameLocator.cs" />
@@ -25,6 +31,7 @@
     <Compile Include="..\..\src\AdofaiModManager\Services\UpdateSourceStore.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\VersionScheme.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Models\InstalledMod.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Models\ModLoaderKind.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Models\ModInfoJson.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Models\KernelManifest.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Models\UpdateModels.cs" />

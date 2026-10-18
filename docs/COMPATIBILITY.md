@@ -77,7 +77,7 @@ GET /api/mods/{resourceType}/{slug}
 
 ### A. 元数据（保留现状）
 
-作者若填了 `GameVersion`，直接精确比对。保留这条逻辑，没有任何副作用。
+作者若填了 `GameVersion`，按 UMM 的语义把它当作**最低游戏版本**：只有当前游戏版本低于它时才提示；游戏更新到更高版本不应误报。`ManagerVersion` 同理，用于检查最低 UMM 版本。
 
 ### B. UMM 运行日志 ⭐ **推荐主力**
 

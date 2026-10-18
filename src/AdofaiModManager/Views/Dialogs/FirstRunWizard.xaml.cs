@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using AdofaiModManager.Models;
 using AdofaiModManager.Services;
 using Wpf.Ui.Controls;
 
@@ -14,6 +15,7 @@ namespace AdofaiModManager.Views.Dialogs;
 public partial class FirstRunWizard : FluentWindow
 {
     private int _step = 1;
+    private bool _loaderPrompted;
 
     public FirstRunWizard()
     {
@@ -81,6 +83,12 @@ public partial class FirstRunWizard : FluentWindow
         {
             // 第 3 步是加载器：进这一步时检测状态，并查一下资源站最新版本
             RefreshLoaderStatus();
+
+            if (!_loaderPrompted)
+            {
+                _loaderPrompted = true;
+                Dispatcher.BeginInvoke(new Action(PromptLoaderSelectionIfNeeded));
+            }
         }
     }
 
@@ -168,27 +176,101 @@ public partial class FirstRunWizard : FluentWindow
 
         SetKernelButtonsEnabled(true);
 
-        if (status.IsInstalled)
+        var environment = GameLoaderEnvironment.Detect(loader.GamePath);
+        var otherInjection = environment.ActiveInjection is not (ModLoaderKind.UnityModManager or ModLoaderKind.Unknown);
+        InstallFromSiteButton.IsEnabled = !otherInjection;
+        InstallBundledButton.IsEnabled = !otherInjection;
+        ImportKernelButton.IsEnabled = !otherInjection;
+
+        if (environment.HasAnyLoader)
         {
-            LoaderStatusText.Text =
-                "✓ 加载器已就绪，可以直接下一步。\n"
-                + $"已部署版本：{status.LoaderVersion ?? "未知"}\n"
-                + "注入方式：UnityDoorstop / DoorstopProxy";
+            var parts = new List<string>
+            {
+                environment.ActiveInjection == ModLoaderKind.Unknown
+                    ? "已安装加载器，但没有检测到有效注入"
+                    : $"当前注入：{environment.ActiveInjection.DisplayName()}",
+            };
+
+            if (environment.UmmLoaderInstalled)
+            {
+                parts.Add($"UnityModManager {environment.UmmVersion ?? "未知"}（mod：{environment.UmmModsPath}）");
+            }
+
+            if (environment.MelonLoaderInstalled)
+            {
+                parts.Add($"MelonLoader {environment.MelonLoaderVersion ?? "未知"}（mod：{environment.MelonModsPath}）");
+            }
+
+            if (environment.BepInExInstalled)
+            {
+                parts.Add($"BepInEx {environment.BepInExVersion ?? "未知"}（plugins：{environment.BepInExPluginsPath}）");
+            }
+
+            if (environment.UmmCompatInstalled)
+            {
+                parts.Add($"UMMBridge {environment.UmmCompatVersion ?? "未知"}"
+                          + (environment.UmmCompatEnabled ? "（已启用）" : "（已禁用）"));
+            }
+
+            LoaderStatusText.Text = "✓ " + string.Join("\n", parts);
         }
         else if (status.IsPartial)
         {
-            LoaderStatusText.Text = "⚠ 检测到加载器不完整，建议重新安装一次。";
+            LoaderStatusText.Text = "⚠ 检测到部分加载器文件，建议重新安装一次。";
         }
         else
         {
-            LoaderStatusText.Text = "○ 尚未安装加载器。从下面三种方式里选一个安装即可。";
+            LoaderStatusText.Text = "○ 尚未安装加载器。点「选择加载器并安装」选择要用的加载器。";
         }
 
         _ = UpdateSiteKernelInfoAsync();
     }
 
+    private void PromptLoaderSelectionIfNeeded()
+    {
+        var loader = CreateLoader();
+        if (loader is null)
+        {
+            return;
+        }
+
+        if (GameLoaderEnvironment.Detect(loader.GamePath) is { HasAnyLoader: true, HasInjection: true })
+        {
+            return;
+        }
+
+        ShowLoaderDialog(loader.GamePath);
+    }
+
+    private void SelectLoader_Click(object sender, RoutedEventArgs e)
+    {
+        var loader = CreateLoader();
+        if (loader is null)
+        {
+            Report(false, "请先在第 1 步设置游戏目录。");
+            return;
+        }
+
+        ShowLoaderDialog(loader.GamePath);
+    }
+
+    private void ShowLoaderDialog(string gamePath)
+    {
+        var dialog = new LoaderSelectionDialog(gamePath)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            Report(true, "加载器安装完成。");
+            RefreshLoaderStatus();
+        }
+    }
+
     private void SetKernelButtonsEnabled(bool enabled)
     {
+        SelectLoaderButton.IsEnabled = enabled;
         InstallFromSiteButton.IsEnabled = enabled;
         InstallBundledButton.IsEnabled = enabled;
         ImportKernelButton.IsEnabled = enabled;

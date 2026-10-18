@@ -100,7 +100,7 @@
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=Star24}"
                                        TargetPageType="{x:Type pages:FavoritesPage}" />
-                <ui:NavigationViewItem Content="UMM 环境"
+                <ui:NavigationViewItem Content="加载器"
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=Wrench24}"
                                        TargetPageType="{x:Type pages:LoaderPage}" />

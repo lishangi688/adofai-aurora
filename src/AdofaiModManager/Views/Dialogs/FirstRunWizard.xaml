@@ -31,7 +31,7 @@
         <StackPanel Grid.Row="1" Margin="32,4,32,0" Orientation="Horizontal">
             <TextBlock x:Name="Step1Label" FontWeight="SemiBold" Text="① 游戏目录" />
             <TextBlock x:Name="Step2Label" Margin="24,0,0,0" Opacity="0.4" Text="② ADOFAITools（可选）" />
-            <TextBlock x:Name="Step3Label" Margin="24,0,0,0" Opacity="0.4" Text="③ UMM 加载器" />
+            <TextBlock x:Name="Step3Label" Margin="24,0,0,0" Opacity="0.4" Text="③ 游戏加载器" />
         </StackPanel>
 
         <!-- 步骤内容 -->
@@ -63,11 +63,11 @@
 
             <!-- 第 3 步：加载器 -->
             <StackPanel x:Name="Step3Panel" Visibility="Collapsed">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="UMM 加载器" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="游戏加载器" />
                 <TextBlock Margin="0,8,0,0"
                            Opacity="0.75"
                            TextWrapping="Wrap"
-                           Text="mod 需要游戏内的 UnityModManager 加载器才能生效。下面会按版本号告诉你哪个更合适；两种都行，装完这里显示「已就绪」就可以继续。" />
+                           Text="选择要使用的加载器；UMM + MelonLoader 需要 UMMBridge。" />
 
                 <Border Margin="0,16,0,0"
                         Padding="16"
@@ -85,7 +85,18 @@
                     </StackPanel>
                 </Border>
 
-                <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                <ui:Button x:Name="SelectLoaderButton"
+                           Margin="0,14,0,0"
+                           Appearance="Primary"
+                           Click="SelectLoader_Click"
+                           Content="选择加载器并安装"
+                           Icon="{ui:SymbolIcon Symbol=ShieldCheckmark24}" />
+
+                <TextBlock Margin="0,16,0,0"
+                           FontSize="12"
+                           Opacity="0.6"
+                           Text="仅安装 UnityModManager（高级）" />
+                <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
                     <ui:Button x:Name="InstallFromSiteButton"
                                Click="InstallFromSite_Click"
                                Content="从 ADOFAITools 获取最新"
