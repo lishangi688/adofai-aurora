@@ -18,6 +18,12 @@ public partial class InstalledModsPage : Page
 
     private bool _busy;
 
+    private CancellationTokenSource? _reloadDebounce;
+
+    private bool _reloading;
+
+    private bool _reloadRequested;
+
     public InstalledModsPage()
     {
         InitializeComponent();
@@ -50,7 +56,34 @@ public partial class InstalledModsPage : Page
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(Reload);
+            Dispatcher.Invoke(ScheduleReload);
+            return;
+        }
+
+        ScheduleReload();
+    }
+
+    /// <summary>
+    /// 更新检查会连续触发好几次 Changed（每个来源改一次状态都会发），
+    /// 每次都整页重建会明显卡顿，所以合并成一次、并且延后一点点再刷。
+    /// </summary>
+    private void ScheduleReload()
+    {
+        _reloadDebounce?.Cancel();
+        _reloadDebounce?.Dispose();
+        _reloadDebounce = new CancellationTokenSource();
+
+        _ = ReloadAfterDelayAsync(_reloadDebounce.Token);
+    }
+
+    private async Task ReloadAfterDelayAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(120, ct);
+        }
+        catch (OperationCanceledException)
+        {
             return;
         }
 
@@ -65,10 +98,41 @@ public partial class InstalledModsPage : Page
             return null;
         }
 
-        return new ModService(gamePath!);
+        return ModService.Get(gamePath!);
     }
 
-    private void Reload()
+    private void Reload() => _ = ReloadAsync();
+
+    /// <summary>
+    /// 整页刷新。扫描游戏目录要读几百个文件、还要解析程序集版本，放在后台线程做，
+    /// 否则切页面 / 更新状态变化时界面会先卡住一下。
+    /// 同时串行化：刷新期间又来了新的刷新请求，只记下来，等这一轮结束后再补一次。
+    /// </summary>
+    private async Task ReloadAsync()
+    {
+        if (_reloading)
+        {
+            _reloadRequested = true;
+            return;
+        }
+
+        _reloading = true;
+        try
+        {
+            do
+            {
+                _reloadRequested = false;
+                await ReloadCoreAsync();
+            }
+            while (_reloadRequested);
+        }
+        finally
+        {
+            _reloading = false;
+        }
+    }
+
+    private async Task ReloadCoreAsync()
     {
         _groups.Clear();
 
@@ -81,13 +145,26 @@ public partial class InstalledModsPage : Page
         }
 
         var updateService = new GitHubUpdateService(AppServices.UpdateSources);
-        var gameVersion = AppServices.GameVersion;
-        var ummVersion = service.Environment.UmmVersion;
         var hasCompatibilityInfo = false;
 
         var scanned = new List<InstalledMod>();
 
-        foreach (var mod in service.Scan())
+        // 扫描要遍历 Mods / UMMMods / Plugins / BepInEx\plugins 并解析程序集版本，
+        // 读游戏版本也要读磁盘 —— 全部放后台线程，别让界面先卡住。
+        var (installed, gameVersion, ummVersion) = await Task.Run(() =>
+        {
+            try
+            {
+                return (service.Scan(), AppServices.GameVersion, service.Environment.UmmVersion);
+            }
+            catch (Exception ex)
+            {
+                AppPaths.AppendDebugLog($"[reload] 扫描 mod 失败：{ex}");
+                return (Array.Empty<InstalledMod>() as IReadOnlyList<InstalledMod>, null, null);
+            }
+        });
+
+        foreach (var mod in installed)
         {
             try
             {
@@ -223,7 +300,7 @@ public partial class InstalledModsPage : Page
 
         if (AppPaths.DebugLogEnabled)
         {
-            Dispatcher.BeginInvoke(
+            _ = Dispatcher.BeginInvoke(
                 new Action(() => AppPaths.AppendDebugLog(
                     $"[installed] Extent={ModsScroller.ExtentHeight} Viewport={ModsScroller.ViewportHeight} Scrollable={ModsScroller.ScrollableHeight}")),
                 System.Windows.Threading.DispatcherPriority.Loaded);
@@ -462,15 +539,10 @@ public partial class InstalledModsPage : Page
 
         try
         {
-            // MelonLoader / BepInEx 的单个 DLL mod，FolderPath 是文件，要打开它所在目录。
-            var folder = File.Exists(mod.FolderPath)
-                ? Path.GetDirectoryName(mod.FolderPath) ?? mod.FolderPath
-                : mod.FolderPath;
-
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"")
-            {
-                UseShellExecute = true,
-            });
+            // MelonLoader / BepInEx 的单个 DLL mod，FolderPath 是文件：
+            // ShellExplorer 会打开它所在目录并选中该文件。
+            // 注意不能用 explorer.exe "路径"——带引号的命令行参数经常被忽略，会退化成打开「文档」。
+            ShellExplorer.OpenFolder(mod.FolderPath);
         }
         catch (Exception ex)
         {
@@ -542,7 +614,8 @@ public partial class InstalledModsPage : Page
     private static async Task<InstallResult?> InstallFromSiteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        InstalledMod? target = null)
     {
         var client = BuildSiteClient();
         if (client is null || string.IsNullOrWhiteSpace(result.SiteSlug))
@@ -551,14 +624,15 @@ public partial class InstalledModsPage : Page
         }
 
         var detail = await client.GetModDetailAsync(result.SiteResourceType ?? "MOD", result.SiteSlug!);
-        return await new SiteInstaller(client, service).InstallAsync(detail, progress);
+        return await new SiteInstaller(client, service).InstallAsync(detail, progress, target: target);
     }
 
     /// <summary>按第三方源（TUF / modlist）的信息安装更新（返回 null 表示解析不到）。</summary>
     private static async Task<InstallResult?> InstallFromRemoteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        InstalledMod target)
     {
         var source = RemoteSources.ById(result.RemoteSourceId);
         if (source is null || string.IsNullOrWhiteSpace(result.RemoteSlug))
@@ -581,7 +655,7 @@ public partial class InstalledModsPage : Page
             return null;
         }
 
-        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress);
+        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress, target: target);
     }
 
     private async void Update_Click(object sender, RoutedEventArgs e)
@@ -591,12 +665,8 @@ public partial class InstalledModsPage : Page
             return;
         }
 
-        if (mod.Loader != ModLoaderKind.UnityModManager)
-        {
-            Report(false, "这个 mod 属于 MelonLoader / BepInEx。当前更新通道只对 UMM mod 自动替换，请到原 mod 页面手动更新。");
-            return;
-        }
-
+        // MelonLoader / BepInEx 的 mod 也能更新：本质上都是"下载 zip 再装回去"，
+        // 装的时候带上 mod.Loader 和它原来的位置，保证还是装回同一个地方。
         var result = AppServices.Updates.Get(mod);
         if (result is null || !result.UpdateAvailable)
         {
@@ -628,7 +698,7 @@ public partial class InstalledModsPage : Page
             if (!string.IsNullOrWhiteSpace(result.RemoteSourceId))
             {
                 // 更新来自第三方源（TUF / modlist）：解析下载地址 → 校验 → 安装
-                var fromRemote = await InstallFromRemoteAsync(service, result, progress);
+                var fromRemote = await InstallFromRemoteAsync(service, result, progress, mod);
                 if (fromRemote is null)
                 {
                     Report(false, $"该更新来自 {result.SourceLabel}，但没能解析出可用的下载地址。");
@@ -643,12 +713,13 @@ public partial class InstalledModsPage : Page
                     ? null
                     : $"{mod.Id}-{result.RemoteVersion}";
 
-                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName);
+                // 带上 mod 本身：更新时按它原来的加载器与目录装回去。
+                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName, mod);
 
                 // GitHub 下载失败（代理挂了 / 被墙）→ 自动改用资源站那一版，别让用户卡住
                 if (!install.Success && result.HasSiteFallback)
                 {
-                    var fallback = await InstallFromSiteAsync(service, result, progress);
+                    var fallback = await InstallFromSiteAsync(service, result, progress, mod);
                     if (fallback is not null)
                     {
                         install = fallback;
@@ -658,7 +729,7 @@ public partial class InstalledModsPage : Page
             }
             else if (result.HasSiteFallback)
             {
-                var fromSite = await InstallFromSiteAsync(service, result, progress);
+                var fromSite = await InstallFromSiteAsync(service, result, progress, mod);
                 if (fromSite is null)
                 {
                     Report(false, $"该更新来自 {AppServices.SiteDisplayName}，但未配置 API key。");

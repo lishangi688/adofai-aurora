@@ -138,6 +138,9 @@ public static class LoaderInstallerService
                 UmmModsMigrator.Move(gamePath, "UMMMods", "Mods");
             }
 
+            // 加载器换了 → mod 的目录与归属全变，缓存里的环境与扫描结果必须作废。
+            ModService.InvalidateCache();
+
             return new InstallResult(true, BuildSuccessMessage(selection));
         }
         catch (Exception ex)

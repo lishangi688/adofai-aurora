@@ -85,7 +85,7 @@ public partial class FavoritesPage : Page
             return null;
         }
 
-        return new ModService(gamePath!);
+        return ModService.Get(gamePath!);
     }
 
     private void Report(bool success, string message)

@@ -218,7 +218,7 @@ public partial class OnlineModsPage : Page
             return null;
         }
 
-        return new ModService(gamePath);
+        return ModService.Get(gamePath);
     }
 
     private static readonly TimeSpan InstalledCacheTtl = TimeSpan.FromSeconds(5);

@@ -86,28 +86,36 @@
                            PaneDisplayMode="Left"
                            SelectionChanged="RootNavigation_SelectionChanged"
                            Transition="FadeInWithSlide">
+            <!-- NavigationCacheMode：页面实例常驻（默认是 Disabled = 每次切换都新建页面）。
+                 不缓存的话每切一次列表都要重新解析 XAML + 重跑 Loaded（重新联网拉列表、
+                 重新扫描 mod 目录），切页面就会明显卡一下，而且列表滚动位置也会丢。 -->
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem Content="在线 Mod"
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=CloudArrowDown24}"
+                                       NavigationCacheMode="Enabled"
                                        TargetPageType="{x:Type pages:OnlineModsPage}" />
                 <ui:NavigationViewItem x:Name="InstalledNavItem"
                                        Content="已安装"
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=Apps24}"
+                                       NavigationCacheMode="Enabled"
                                        TargetPageType="{x:Type pages:InstalledModsPage}" />
                 <ui:NavigationViewItem Content="收藏"
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=Star24}"
+                                       NavigationCacheMode="Enabled"
                                        TargetPageType="{x:Type pages:FavoritesPage}" />
                 <ui:NavigationViewItem Content="加载器"
                                        FocusVisualStyle="{x:Null}"
                                        Icon="{ui:SymbolIcon Symbol=Wrench24}"
+                                       NavigationCacheMode="Enabled"
                                        TargetPageType="{x:Type pages:LoaderPage}" />
             </ui:NavigationView.MenuItems>
             <ui:NavigationView.FooterMenuItems>
                 <ui:NavigationViewItem Content="设置"
                                        Icon="{ui:SymbolIcon Symbol=Settings24}"
+                                       NavigationCacheMode="Enabled"
                                        TargetPageType="{x:Type pages:SettingsPage}" />
             </ui:NavigationView.FooterMenuItems>
         </ui:NavigationView>

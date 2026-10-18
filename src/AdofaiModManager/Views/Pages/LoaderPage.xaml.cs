@@ -50,7 +50,7 @@ public partial class LoaderPage : Page
             return;
         }
 
-        if (GameLoaderEnvironment.Detect(gamePath) is { HasAnyLoader: true, HasInjection: true })
+        if (ModService.DetectEnvironment(gamePath) is { HasAnyLoader: true, HasInjection: true })
         {
             return;
         }
@@ -87,7 +87,7 @@ public partial class LoaderPage : Page
         }
 
         var status = loader.Detect();
-        var environment = GameLoaderEnvironment.Detect(loader.GamePath);
+        var environment = ModService.DetectEnvironment(loader.GamePath);
         var kernels = new KernelService(loader).GetLocalKernels();
 
         if (!status.GameExists)
@@ -193,6 +193,12 @@ public partial class LoaderPage : Page
             var progress = new InlineProgress<string>(message => Report(true, message), Dispatcher);
 
             var result = await new KernelBootstrapper(loader).InstallBestAsync(client, progress);
+            if (result.Success)
+            {
+                // 加载器变了 → mod 目录与归属全变，别再用缓存里的环境 / 扫描结果。
+                ModService.InvalidateCache();
+            }
+
             Report(result.Success, result.Message);
         }
         finally
@@ -212,7 +218,7 @@ public partial class LoaderPage : Page
             return;
         }
 
-        var environment = GameLoaderEnvironment.Detect(loader.GamePath);
+        var environment = ModService.DetectEnvironment(loader.GamePath);
         if (environment.ActiveInjection is not (ModLoaderKind.UnityModManager or ModLoaderKind.Unknown))
         {
             Report(false, "当前注入的是 MelonLoader / BepInEx，不能直接更新 UMM 内核。请用「安装 / 切换加载器」重新安装 UMMBridge 或选择 UMM 单独使用。");
@@ -288,7 +294,7 @@ public partial class LoaderPage : Page
             return;
         }
 
-        var environment = GameLoaderEnvironment.Detect(loader.GamePath);
+        var environment = ModService.DetectEnvironment(loader.GamePath);
         if (environment.ActiveInjection is not (ModLoaderKind.UnityModManager or ModLoaderKind.Unknown))
         {
             Report(false, "当前注入的是 MelonLoader / BepInEx，不能在这里回滚 UMM 内核。请用「安装 / 切换加载器」重新安装。");
@@ -377,7 +383,7 @@ public partial class LoaderPage : Page
             return;
         }
 
-        var environment = GameLoaderEnvironment.Detect(loader.GamePath);
+        var environment = ModService.DetectEnvironment(loader.GamePath);
         if (environment.ActiveInjection != ModLoaderKind.UnityModManager)
         {
             Report(false, "当前注入的不是 UnityModManager。请用「安装 / 切换加载器」选择要保留的环境，Aurora 会先备份旧的注入文件。");
@@ -395,7 +401,13 @@ public partial class LoaderPage : Page
             return;
         }
 
-        Report(loader.Uninstall());
+        var uninstalled = loader.Uninstall();
+        if (uninstalled.Success)
+        {
+            ModService.InvalidateCache();
+        }
+
+        Report(uninstalled);
         Refresh();
     }
 
@@ -409,10 +421,8 @@ public partial class LoaderPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{loader.GamePath}\"")
-            {
-                UseShellExecute = true,
-            });
+            // 不走 explorer.exe 命令行：带引号的路径参数经常被忽略，会打开「文档」而不是游戏目录。
+            ShellExplorer.OpenFolder(loader.GamePath);
         }
         catch (Exception ex)
         {

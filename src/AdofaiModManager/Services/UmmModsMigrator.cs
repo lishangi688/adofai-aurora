@@ -33,6 +33,7 @@ public static class UmmModsMigrator
 
         Directory.CreateDirectory(destination);
         var moved = 0;
+        var touched = false;
 
         foreach (var dir in Directory.GetDirectories(source))
         {
@@ -59,11 +60,18 @@ public static class UmmModsMigrator
             {
                 Directory.Move(dir, target);
                 moved++;
+                touched = true;
             }
             catch (Exception ex)
             {
                 AppPaths.AppendDebugLog($"[loader] 迁移 UMM mod 失败 {name}：{ex.Message}");
             }
+        }
+
+        if (touched)
+        {
+            // mod 换了目录：别让"已安装"页继续显示迁移前的缓存结果。
+            ModService.InvalidateCache();
         }
 
         return moved;

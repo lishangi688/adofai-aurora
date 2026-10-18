@@ -406,6 +406,11 @@ public partial class FirstRunWizard : FluentWindow
         {
             var progress = new InlineProgress<string>(message => Report(true, message), Dispatcher);
             var result = await new KernelBootstrapper(loader).InstallFromSiteAsync(client, progress);
+            if (result.Success)
+            {
+                ModService.InvalidateCache();
+            }
+
             Report(result.Success, result.Message);
         }
         catch (AdofaiToolsException ex)
@@ -429,6 +434,11 @@ public partial class FirstRunWizard : FluentWindow
         }
 
         var result = new KernelBootstrapper(loader).InstallBundled();
+        if (result.Success)
+        {
+            ModService.InvalidateCache();
+        }
+
         Report(result.Success, result.Message);
         RefreshLoaderStatus();
     }
@@ -466,6 +476,11 @@ public partial class FirstRunWizard : FluentWindow
             }
 
             var result = kernel.Deploy(imported);
+            if (result.Success)
+            {
+                ModService.InvalidateCache();
+            }
+
             Report(result.Success, result.Message);
         }
         finally

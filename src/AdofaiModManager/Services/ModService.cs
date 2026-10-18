@@ -33,6 +33,15 @@ public sealed class ModService
         "Libraries", "Dependencies", "Mods", ".git", ".vs",
     ];
 
+    /// <summary>
+    /// Plugins 目录里属于「加载器本身」的组件，不作为 mod 列出
+    /// （UMMCompat / UMMBridge 由「加载器」页安装和卸载，重复出现会误导用户）。
+    /// </summary>
+    private static readonly string[] IgnoredMelonPluginFiles =
+    [
+        "UMMBridge.dll", "UMMCompat.dll",
+    ];
+
     public string GamePath { get; }
 
     public GameLoaderEnvironment Environment { get; }
@@ -58,10 +67,95 @@ public sealed class ModService
     }
 
     // ==================================================================
+    // 实例 / 扫描结果缓存（切换页面时的卡顿主要来自这里）
+    // ==================================================================
+
+    private static readonly object CacheLock = new();
+
+    private static string? _cachedPath;
+
+    private static ModService? _cachedService;
+
+    /// <summary>
+    /// 取一个复用的 <see cref="ModService"/>。
+    ///
+    /// 构造它要跑一遍 <see cref="GameLoaderEnvironment.Detect"/>：几十次文件存在性判断、
+    /// 还要读几个程序集版本、翻MelonLoader 日志。原来每个页面、每次刷新都新建一个，
+    /// 切一次列表就白跑一遍，UI 线程直接被卡住。
+    /// 任何会改变磁盘状态的操作（安装 / 卸载 / 启停 / 切换加载器）后要调用 <see cref="InvalidateCache"/>。
+    /// </summary>
+    public static ModService Get(string gamePath)
+    {
+        lock (CacheLock)
+        {
+            if (_cachedService is not null &&
+                string.Equals(_cachedPath, gamePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return _cachedService;
+            }
+
+            _cachedService = new ModService(gamePath);
+            _cachedPath = gamePath;
+            return _cachedService;
+        }
+    }
+
+    /// <summary>
+    /// 复用缓存的加载器环境探测结果（和 <see cref="Get"/> 用同一个实例）。
+    /// 页面里凡是 GameLoaderEnvironment.Detect(...) 的地方都该走这里，否则每次刷新都重探一遍磁盘。
+    /// </summary>
+    public static GameLoaderEnvironment DetectEnvironment(string gamePath) => Get(gamePath).Environment;
+
+    /// <summary>丢掉缓存的实例与扫描结果（改了游戏目录、装卸完 mod / 加载器后调用）。</summary>
+    public static void InvalidateCache()
+    {
+        lock (CacheLock)
+        {
+            _cachedService?.InvalidateScan();
+            _cachedService = null;
+            _cachedPath = null;
+        }
+    }
+
+    /// <summary>丢弃本实例的扫描结果（磁盘上刚装/删过东西时调用）。</summary>
+    public void InvalidateScan()
+    {
+        lock (_scanLock)
+        {
+            _scanCache = null;
+            _scanTime = DateTime.MinValue;
+        }
+    }
+
+    // ==================================================================
     // 扫描
     // ==================================================================
 
+    /// <summary>扫描结果的短暂缓存：切换页面 / 刷新列表时不必每次都重读一遍磁盘与程序集元数据。</summary>
+    private static readonly TimeSpan ScanCacheTtl = TimeSpan.FromSeconds(3);
+
+    private readonly object _scanLock = new();
+
+    private IReadOnlyList<InstalledMod>? _scanCache;
+
+    private DateTime _scanTime = DateTime.MinValue;
+
     public IReadOnlyList<InstalledMod> Scan()
+    {
+        lock (_scanLock)
+        {
+            if (_scanCache is not null && DateTime.UtcNow - _scanTime < ScanCacheTtl)
+            {
+                return _scanCache;
+            }
+
+            _scanCache = ScanCore();
+            _scanTime = DateTime.UtcNow;
+            return _scanCache;
+        }
+    }
+
+    private IReadOnlyList<InstalledMod> ScanCore()
     {
         var result = new List<InstalledMod>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -106,6 +200,13 @@ public sealed class ModService
             (Environment.MelonLoaderInstalled && !sameModsRoot))
         {
             ScanMelon(Environment.MelonModsPath, Add);
+        }
+
+        // MelonLoader 除了 Mods 还有 Plugins（MelonPlugin 插件目录）。
+        // 之前只扫 Mods，装在 Plugins 下的插件整个漏掉，界面上既看不到也打不开。
+        if (Environment.MelonLoaderInstalled || Directory.Exists(Environment.MelonPluginsPath))
+        {
+            ScanMelon(Environment.MelonPluginsPath, Add, IgnoredMelonPluginFiles);
         }
 
         if (Environment.BepInExInstalled || Directory.Exists(Environment.BepInExPluginsPath))
@@ -172,7 +273,7 @@ public sealed class ModService
         }
     }
 
-    private void ScanMelon(string root, Action<InstalledMod> add)
+    private void ScanMelon(string root, Action<InstalledMod> add, IReadOnlyCollection<string>? ignoredFileNames = null)
     {
         if (!Directory.Exists(root))
         {
@@ -212,6 +313,8 @@ public sealed class ModService
                     DisplayName = manifestInfo.Name ?? name,
                     Version = version,
                     Author = manifestInfo.Author,
+                    Repository = manifestInfo.Repository,
+                    HomePage = manifestInfo.HomePage,
                     FolderPath = dir,
                     FolderName = name,
                     IsEnabled = enabled,
@@ -231,6 +334,12 @@ public sealed class ModService
             if (isDisabled)
             {
                 displayName = displayName[..^".disabled".Length];
+            }
+
+            // 加载器自身的组件（例如 Plugins\UMMBridge.dll）不作为 mod 列出。
+            if (ignoredFileNames?.Contains(displayName, StringComparer.OrdinalIgnoreCase) == true)
+            {
+                continue;
             }
 
             var id = Path.GetFileNameWithoutExtension(displayName);
@@ -282,6 +391,8 @@ public sealed class ModService
                     DisplayName = manifestInfo.Name ?? name,
                     Version = manifestInfo.Version ?? ReadAssemblyVersion(FindPrimaryDll(dlls)),
                     Author = manifestInfo.Author,
+                    Repository = manifestInfo.Repository,
+                    HomePage = manifestInfo.HomePage,
                     FolderPath = dir,
                     FolderName = name,
                     IsEnabled = dlls.Any(d => !d.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)),
@@ -343,28 +454,44 @@ public sealed class ModService
         return null;
     }
 
-    private static (string? Id, string? Name, string? Version, string? Author) ReadMelonManifest(string? path)
+    private static MelonManifestInfo ReadMelonManifest(string? path)
     {
         if (path is null || !File.Exists(path))
         {
-            return (null, null, null, null);
+            return default;
         }
 
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var root = doc.RootElement;
-            return (
+
+            // MelonLoader 的 ModInfo.json 里有一个 DownloadedFrom（作者填的来源地址），
+            // 有它就能自动认出 GitHub / Repository.json 更新源，MelonLoader mod 也能自动检查更新。
+            var url = GetString(root, "DownloadedFrom", "Homepage", "HomePage", "Repository", "SourceUrl");
+
+            return new MelonManifestInfo(
                 GetString(root, "id", "Id", "name", "Name"),
                 GetString(root, "name", "Name", "displayName", "DisplayName"),
                 GetString(root, "version", "Version"),
-                GetString(root, "author", "Author"));
+                GetString(root, "author", "Author"),
+                Repository: url is not null && url.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? url : null,
+                HomePage: url is not null && !url.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? url : null);
         }
         catch
         {
-            return (null, null, null, null);
+            return default;
         }
     }
+
+    /// <summary>MelonLoader / BepInEx 的清单文件读出来的东西。</summary>
+    private readonly record struct MelonManifestInfo(
+        string? Id,
+        string? Name,
+        string? Version,
+        string? Author,
+        string? Repository = null,
+        string? HomePage = null);
 
     private static string? GetString(JsonElement root, params string[] names)
     {
@@ -409,12 +536,21 @@ public sealed class ModService
     // 安装 zip
     // ==================================================================
 
-    public InstallResult InstallFromZip(string zipPath)
+    /// <param name="zipPath">mod 压缩包。</param>
+    /// <param name="target">
+    /// 更新时传入「当前已安装的那个 mod」。同一个包经常同时带 UMM / MelonLoader / BepInEx 多个变体，
+    /// 传入它就能保证"当初装在哪、就按哪种方式更新在哪"，不会因为包内容或环境变化把 mod 挪到别处。
+    /// 传null = 全新安装，按包内容自动识别。
+    /// </param>
+    public InstallResult InstallFromZip(string zipPath, InstalledMod? target = null)
     {
         if (!File.Exists(zipPath))
         {
             return new InstallResult(false, "文件不存在。");
         }
+
+        // 装完磁盘就变了：本实例的扫描结果立刻作废（别的页面再切回来时能立刻看到新版本）。
+        InvalidateScan();
 
         if (GameProcessGuard.IsGameRunning())
         {
@@ -439,6 +575,15 @@ public sealed class ModService
             if (IsUmmCompatPackage(entries))
             {
                 return InstallUmmCompat(entries);
+            }
+
+            // 更新（而不是首次安装）：沿用当前 mod 的加载器与安装方式。
+            // 一个包经常同时带 UMM / MelonLoader / BepInEx 三个变体，如果在这里重新自动识别，
+            // 结果很可能与当初安装的位置不一致（例如 UMM 的 mod 被"更新"进了 Mods 目录）。
+            if (target is { } hint &&
+                hint.Loader is ModLoaderKind.UnityModManager or ModLoaderKind.MelonLoader or ModLoaderKind.BepInEx)
+            {
+                return InstallAsInstalledLoader(entries, hint);
             }
 
             var infoEntries = entries
@@ -517,11 +662,57 @@ public sealed class ModService
         }
     }
 
+    /// <summary>
+    /// 按"当前这个 mod 当初是怎么装的"来更新：不重新猜包格式，只认它所属的加载器。
+    ///
+    /// 这解决了同一个 mod 支持多个加载器时的两个问题：
+    ///  ① 装了 MelonLoader 版，却在更新时被 Info.json 带去装成 UMM 版；
+    ///  ② 一个包里 MelonLoader 与 BepInEx 的 DLL 混在一起，装到另一个加载器的目录里去。
+    /// </summary>
+    private InstallResult InstallAsInstalledLoader(IReadOnlyList<PackageEntry> entries, InstalledMod target)
+    {
+        switch (target.Loader)
+        {
+            case ModLoaderKind.UnityModManager:
+            {
+                var infoEntries = entries
+                    .Where(e => Path.GetFileName(e.Path).Equals("Info.json", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(e => e.Path.Count(c => c == '/'))
+                    .ToList();
+
+                if (infoEntries.Count == 0)
+                {
+                    return new InstallResult(
+                        false,
+                        $"「{target.DisplayName}」装在 UMM 目录，但新版本压缩包里没有 Info.json，无法按 UMM 方式更新。");
+                }
+
+                var info = ReadInfo(infoEntries[0]);
+                if (info is null || string.IsNullOrWhiteSpace(info.Id))
+                {
+                    return new InstallResult(false, "Info.json 无效或缺少 Id 字段。");
+                }
+
+                return InstallUmm(entries, info, infoEntries[0], infoEntries.Count > 1, target);
+            }
+
+            case ModLoaderKind.MelonLoader:
+                return InstallMelon(entries, target);
+
+            case ModLoaderKind.BepInEx:
+                return InstallBepInEx(entries, target);
+
+            default:
+                return new InstallResult(false, $"无法识别「{target.LoaderLabel}」的安装方式。");
+        }
+    }
+
     private InstallResult InstallUmm(
         IReadOnlyList<PackageEntry> entries,
         ModInfoJson info,
         PackageEntry infoEntry,
-        bool multipleMods)
+        bool multipleMods,
+        InstalledMod? target = null)
     {
         if (!TryValidateId(info.Id, out var safeId, out var idError))
         {
@@ -551,6 +742,21 @@ public sealed class ModService
             }
 
             var oldFolders = FindFoldersWithModId(root, info.Id);
+
+            // 更新场景：把"当前正在更新的那个文件夹"也算作要替换的旧目录。
+            // 旧文件夹可能因为站长改过 Id 而和Info.json 对不上（例如 out 与 AccurateJudgementBar），
+            // 漏掉它会装出第二份，界面上就出现"同一个 mod 有两份"的重复警告。
+            if (target is { FolderPath.Length: > 0 } hint &&
+                Directory.Exists(hint.FolderPath) &&
+                !oldFolders.Any(f => string.Equals(f, hint.FolderPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                var hintFull = Path.GetFullPath(hint.FolderPath);
+                if (hintFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    oldFolders.Add(hintFull);
+                }
+            }
+
             var previousSettings = TryReadPreviousSettings(oldFolders);
 
             // 先把旧目录移动到备份位置，再放新版本；失败时恢复。
@@ -655,7 +861,7 @@ public sealed class ModService
         }
     }
 
-    private InstallResult InstallMelon(IReadOnlyList<PackageEntry> entries)
+    private InstallResult InstallMelon(IReadOnlyList<PackageEntry> entries, InstalledMod? target = null)
     {
         var gameRoot = Path.GetFullPath(GamePath);
         var installEntries = FilterEntriesForLoader(entries, ModLoaderKind.MelonLoader);
@@ -663,6 +869,15 @@ public sealed class ModService
             e.Path.StartsWith("Mods/", StringComparison.OrdinalIgnoreCase) ||
             e.Path.StartsWith("Plugins/", StringComparison.OrdinalIgnoreCase) ||
             e.Path.StartsWith("UserLibs/", StringComparison.OrdinalIgnoreCase));
+
+        // 更新：沿用当前的安装位置（Mods 下的同名文件夹，或 Plugins 下的 MelonPlugin）
+        if (TryGetUpdatePath(
+                target,
+                [Environment.MelonModsPath, Environment.MelonPluginsPath],
+                out var updatePath))
+        {
+            return UpdateLoaderMod(installEntries, ModLoaderKind.MelonLoader, target!, updatePath, gameRoot);
+        }
 
         var targetRoot = hasStructured ? gameRoot : Path.Combine(gameRoot, "Mods");
         Directory.CreateDirectory(targetRoot);
@@ -698,12 +913,18 @@ public sealed class ModService
         }
     }
 
-    private InstallResult InstallBepInEx(IReadOnlyList<PackageEntry> entries)
+    private InstallResult InstallBepInEx(IReadOnlyList<PackageEntry> entries, InstalledMod? target = null)
     {
         var gameRoot = Path.GetFullPath(GamePath);
         var installEntries = FilterEntriesForLoader(entries, ModLoaderKind.BepInEx);
         var hasGameStructure = installEntries.Any(e => e.Path.StartsWith("BepInEx/", StringComparison.OrdinalIgnoreCase));
         var hasPluginsPrefix = installEntries.Any(e => e.Path.StartsWith("plugins/", StringComparison.Ordinal));
+
+        // 更新：沿用当前的安装位置（BepInEx/plugins 下的同名文件夹或单个 dll）
+        if (TryGetUpdatePath(target, [Environment.BepInExPluginsPath], out var updatePath))
+        {
+            return UpdateLoaderMod(installEntries, ModLoaderKind.BepInEx, target!, updatePath, gameRoot);
+        }
 
         var targetRoot = hasGameStructure
             ? gameRoot
@@ -749,6 +970,527 @@ public sealed class ModService
             TryDeleteDirectory(staging);
         }
     }
+
+    // ==================================================================
+    // 更新（MelonLoader / BepInEx）：装在哪就更新在哪
+    // ==================================================================
+
+    /// <summary>包里所有文件都放在同一个顶层目录里（Mods/ · Plugins/ · plugins/ · BepInEx/ …）时，那个目录名。</summary>
+    private static readonly string[] LoaderContainers = ["Mods", "Plugins", "UserLibs", "BepInEx", "plugins"];
+
+    /// <summary>
+    /// 判断能不能按"原地更新"处理：目标必须是这个已安装 mod 自己的文件/文件夹，
+    /// 而且要落在对应加载器的目录里（避免误删 UMM 目录或别的东西）。
+    /// </summary>
+    private static bool TryGetUpdatePath(InstalledMod? target, string[] loaderRoots, out string path)
+    {
+        path = string.Empty;
+
+        if (target is null || string.IsNullOrWhiteSpace(target.FolderPath))
+        {
+            return false;
+        }
+
+        var candidate = Path.GetFullPath(target.FolderPath);
+        if (!File.Exists(candidate) && !Directory.Exists(candidate))
+        {
+            return false;
+        }
+
+        foreach (var root in loaderRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                continue;
+            }
+
+            var rootFull = Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            if (candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+            {
+                path = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 更新一个已经装好的 MelonLoader / BepInEx mod。
+    ///
+    /// 规则很简单：当初装在哪，现在就更新到哪。
+    ///  · 旧的是文件夹 → 整个替换，新版本没有的旧文件不会残留；
+    ///  · 旧的是单个 dll → 新文件放进它所在的目录，旧 dll 被替换掉；
+    ///  · 同一个包里 UMM / MelonLoader / BepInEx 三个变体都有 → 只取当前加载器那一份；
+    ///  · 之前是禁用状态（*.dll.disabled）→ 更新后仍然保持禁用。
+    /// 中途失败会把旧文件/目录放回去。
+    /// </summary>
+    private InstallResult UpdateLoaderMod(
+        IReadOnlyList<PackageEntry> entries,
+        ModLoaderKind loader,
+        InstalledMod target,
+        string existingPath,
+        string gameRoot)
+    {
+        var label = LoaderLabel(loader);
+        var isFile = File.Exists(existingPath);
+        var role = DetectInstallRole(existingPath);
+        var staging = Path.Combine(Path.GetTempPath(), $"aurora-update-{Guid.NewGuid():N}");
+
+        try
+        {
+            // ① 先按加载器过滤；② 多加载器混合包再去掉 UMM 那一版；③ 把容器前缀映射到当前安装位置。
+            var installEntries = FilterEntriesForLoader(entries, loader);
+            var hasStructure = installEntries.Any(IsContainerPath);
+            if (hasStructure)
+            {
+                installEntries = DropUmmVariant(installEntries);
+            }
+
+            var container = DetectContainer(installEntries);
+
+            // 容器目录（如 Mods/）要映射到"这个 mod 现在所在的那个目录"，
+            // 而不是简单地塞回游戏根目录 —— 装在 Plugins 的插件不该被更新到 Mods 去。
+            var extractRoot = container is null ? null : ResolveContainerRoot(container, role, loader, gameRoot);
+            var mapped = container is not null
+                ? MapToContainer(installEntries, container)
+                : MapToInstalledFolder(installEntries, role);
+
+            if (mapped.Count == 0)
+            {
+                return new InstallResult(false, $"新版本压缩包里没有找到 {label} 版本的文件。");
+            }
+
+            Directory.CreateDirectory(staging);
+
+            // 先解压到临时目录，确认确实有 DLL 再动游戏目录。
+            var extracted = ExtractEntries(mapped, staging, requireInfoJson: false);
+            if (extracted == 0 || CountDlls(staging) == 0)
+            {
+                return new InstallResult(false, $"新版本压缩包里没有找到 DLL，无法更新 {label} mod。");
+            }
+
+            // 结构化包：按容器目录写入（可能是游戏根目录，也可能是当前的 Mods / Plugins）
+            if (extractRoot is not null)
+            {
+                var backup = MoveAside(existingPath);
+                try
+                {
+                    CopyDirectoryContents(staging, extractRoot, overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    RestoreAside(backup, existingPath, discard: false);
+                    AppPaths.AppendDebugLog($"[update] 写入 {extractRoot} 失败：{ex.Message}");
+                    throw;
+                }
+
+                RestoreAside(backup, existingPath, discard: true);
+
+                if (!target.IsEnabled && Directory.Exists(existingPath))
+                {
+                    SetDllEnabled(existingPath, false);
+                }
+
+                return new InstallResult(true, $"已更新 {target.DisplayName}（{label}）：{extractRoot}。");
+            }
+
+            var parent = Path.GetDirectoryName(existingPath);
+            if (isFile)
+            {
+                // 单个 dll 的 mod：新文件放进同一个目录，旧的 dll 由"挪走"这一步清掉。
+                if (string.IsNullOrWhiteSpace(parent))
+                {
+                    return new InstallResult(false, "无法确定这个 mod 的安装位置。");
+                }
+
+                var dlls = RelativeDllPaths(staging);
+                var backup = MoveAside(existingPath);
+                try
+                {
+                    CopyDirectoryContents(staging, parent, overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    RestoreAside(backup, existingPath, discard: false);
+                    AppPaths.AppendDebugLog($"[update] 写入 {parent} 失败：{ex.Message}");
+                    throw;
+                }
+
+                RestoreAside(backup, existingPath, discard: true);
+
+                if (!target.IsEnabled)
+                {
+                    foreach (var relative in dlls)
+                    {
+                        SetDllEnabled(Path.Combine(parent, relative), false);
+                    }
+                }
+
+                return new InstallResult(true, $"已更新 {target.DisplayName}（{label}）：{parent}。");
+            }
+
+            // 扁平包：包里只有一个 mod 文件夹时把那个文件夹当作 mod 本体，
+            // 否则包里的东西本身就是 mod 内容，直接铺进原来的文件夹。
+            var payload = ResolveSingleFolder(staging) ?? staging;
+            ReplaceDirectory(payload, existingPath);
+            SetDllEnabled(existingPath, target.IsEnabled);
+
+            return new InstallResult(true, $"已更新 {target.DisplayName}（{label}）：{existingPath}。");
+        }
+        catch (Exception ex)
+        {
+            return new InstallResult(false, $"更新 {label} mod 失败：{ex.Message}");
+        }
+        finally
+        {
+            TryDeleteDirectory(staging);
+        }
+    }
+
+    /// <summary>这个 mod 现在装在哪种容器目录里（Mods / Plugins / BepInEx 的 plugins）。</summary>
+    private string? DetectInstallRole(string existingPath)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(existingPath));
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return null;
+        }
+
+        if (IsSameDirectory(parent, Environment.MelonModsPath))
+        {
+            return "Mods";
+        }
+
+        if (IsSameDirectory(parent, Environment.MelonPluginsPath))
+        {
+            return "Plugins";
+        }
+
+        if (IsSameDirectory(parent, Environment.BepInExPluginsPath))
+        {
+            return "plugins";
+        }
+
+        return null;
+    }
+
+    private static bool IsSameDirectory(string left, string right) =>
+        string.Equals(
+            Path.GetFullPath(left).TrimEnd('\\', '/'),
+            Path.GetFullPath(right).TrimEnd('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>包里所有文件是否都在同一个顶层容器目录（Mods/ · plugins/ …）里，是则返回该目录名。</summary>
+    private static string? DetectContainer(IReadOnlyList<PackageEntry> entries)
+    {
+        string? container = null;
+
+        foreach (var entry in entries)
+        {
+            var slash = entry.Path.IndexOf('/');
+            if (slash <= 0)
+            {
+                // 有文件直接躺在压缩包根目录 → 不算"整体装在某个容器里"
+                return null;
+            }
+
+            var first = entry.Path[..slash];
+            if (!LoaderContainers.Contains(first, StringComparer.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (container is null)
+            {
+                container = first;
+            }
+            else if (!container.Equals(first, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        return container;
+    }
+
+    private static bool IsContainerPath(PackageEntry entry)
+    {
+        var slash = entry.Path.IndexOf('/');
+        return slash > 0 && LoaderContainers.Contains(entry.Path[..slash], StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 多加载器混合包在更新 MelonLoader / BepInEx mod 时，要先把"UMM 那一版"剔掉。
+    /// 认法：那棵子目录里有 UMM 版的 Info.json（带 Id / AssemblyName）。
+    /// </summary>
+    private static IReadOnlyList<PackageEntry> DropUmmVariant(IReadOnlyList<PackageEntry> entries)
+    {
+        var ummRoots = new List<string>();
+        var rootLevelInfo = new List<PackageEntry>();
+
+        foreach (var entry in entries)
+        {
+            if (!Path.GetFileName(entry.Path).Equals("Info.json", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var slash = entry.Path.LastIndexOf('/');
+            var prefix = slash < 0 ? string.Empty : entry.Path[..(slash + 1)];
+            if (prefix.Length == 0)
+            {
+                rootLevelInfo.Add(entry);
+                continue;
+            }
+
+            var info = ReadInfo(entry);
+            if (info is not null &&
+                (!string.IsNullOrWhiteSpace(info.Id) || !string.IsNullOrWhiteSpace(info.AssemblyName)))
+            {
+                ummRoots.Add(prefix);
+            }
+        }
+
+        if (ummRoots.Count == 0 && rootLevelInfo.Count == 0)
+        {
+            return entries;
+        }
+
+        return entries
+            .Where(e => !rootLevelInfo.Contains(e))
+            .Where(e => !ummRoots.Any(prefix =>
+                e.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+    }
+
+    /// <summary>容器目录对应的写入位置：优先当前安装位置，其次按包结构推导。</summary>
+    private string? ResolveContainerRoot(string container, string? role, ModLoaderKind loader, string gameRoot)
+    {
+        // 当前就装在这个容器里 → 写回同一个目录（保持"装在哪"）。
+        if (role is not null && container.Equals(role, StringComparison.OrdinalIgnoreCase))
+        {
+            return RoleRoot(role);
+        }
+
+        // Plugins（大写）与 plugins（小写）只差大小写，却分别属于 MelonLoader 和 BepInEx，
+        // 所以这里必须结合"这个 mod 属于哪个加载器"来判断，不能只看大小写。
+        if (loader == ModLoaderKind.MelonLoader && container.Equals("Plugins", StringComparison.OrdinalIgnoreCase))
+        {
+            return Environment.MelonPluginsPath;
+        }
+
+        if (loader == ModLoaderKind.BepInEx && container.Equals("plugins", StringComparison.OrdinalIgnoreCase))
+        {
+            return Environment.BepInExPluginsPath;
+        }
+
+        if (container.Equals("plugins", StringComparison.Ordinal))
+        {
+            // BepInEx 的约定是小写 plugins/，指的就是 BepInEx\plugins 本身。
+            return Environment.BepInExPluginsPath;
+        }
+
+        return gameRoot;
+    }
+
+    private string? RoleRoot(string role) => role switch
+    {
+        "Mods" => Environment.MelonModsPath,
+        "Plugins" => Environment.MelonPluginsPath,
+        _ => Environment.BepInExPluginsPath,
+    };
+
+    /// <summary>剥掉容器前缀，让内容相对容器目录展开。</summary>
+    private static IReadOnlyList<PackageEntry> MapToContainer(
+        IReadOnlyList<PackageEntry> entries,
+        string container)
+    {
+        var prefix = container + "/";
+        return entries
+            .Where(e => e.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e with { Path = e.Path[prefix.Length..] })
+            .Where(e => e.Path.Length > 0)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 扁平包没有容器前缀：属于别的容器的文件丢掉，剩下的按"当前安装位置"重新映射。
+    /// （例如包根目录下的 UMM 版 Info.json 在更新 MelonLoader mod 时不该被写进去。）
+    /// </summary>
+    private static IReadOnlyList<PackageEntry> MapToInstalledFolder(
+        IReadOnlyList<PackageEntry> entries,
+        string? role)
+    {
+        var prefix = role is null ? null : role + "/";
+
+        var result = new List<PackageEntry>();
+        foreach (var entry in entries)
+        {
+            if (IsContainerPath(entry))
+            {
+                // 属于别的容器（Plugins/ · UserLibs/ …），当前 mod 不在那儿，跳过
+                if (prefix is null ||
+                    !entry.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                result.Add(entry with { Path = entry.Path[prefix.Length..] });
+                continue;
+            }
+
+            result.Add(entry);
+        }
+
+        return result.Where(e => e.Path.Length > 0).ToList();
+    }
+
+    /// <summary>包里只有一个顶层文件夹时返回它（很多 mod 包都长这样），否则返回 null。</summary>
+    private static string? ResolveSingleFolder(string root)
+    {
+        if (!Directory.Exists(root))
+        {
+            return null;
+        }
+
+        var items = Directory.GetFileSystemEntries(root);
+        return items.Length == 1 && Directory.Exists(items[0]) ? items[0] : null;
+    }
+
+    private static int CountDlls(string root) =>
+        Directory.Exists(root)
+            ? Directory.EnumerateFiles(root, "*.dll", SearchOption.AllDirectories).Count()
+            : 0;
+
+    /// <summary>暂存目录里所有 DLL 相对于暂存根的路径（用来恢复禁用状态）。</summary>
+    private static List<string> RelativeDllPaths(string root)
+    {
+        var result = new List<string>();
+        if (!Directory.Exists(root))
+        {
+            return result;
+        }
+
+        var rootFull = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.EnumerateFiles(root, "*.dll", SearchOption.AllDirectories))
+        {
+            result.Add(Path.GetRelativePath(rootFull, file));
+        }
+
+        return result;
+    }
+
+    /// <summary>用 source 的内容整体替换 destination（先备份旧目录，失败自动还原）。</summary>
+    private static void ReplaceDirectory(string source, string destination)
+    {
+        var backup = MoveAside(destination);
+        try
+        {
+            CopyDirectoryContents(source, destination, overwrite: true);
+        }
+        catch
+        {
+            RestoreAside(backup, destination, discard: false);
+            throw;
+        }
+        finally
+        {
+            RestoreAside(backup, destination, discard: true);
+        }
+    }
+
+    /// <summary>把 path 暂挪到同级的 .aurora-backup 里，返回备份目录（不存在则返回 null）。</summary>
+    private static string? MoveAside(string path)
+    {
+        var isFile = File.Exists(path);
+        if (!isFile && !Directory.Exists(path))
+        {
+            return null;
+        }
+
+        var parent = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return null;
+        }
+
+        try
+        {
+            var backupRoot = Path.Combine(parent, ".aurora-backup", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(backupRoot);
+
+            var destination = Path.Combine(backupRoot, Path.GetFileName(path));
+            if (isFile)
+            {
+                File.Move(path, destination, true);
+            }
+            else
+            {
+                Directory.Move(path, destination);
+            }
+
+            return backupRoot;
+        }
+        catch (Exception ex)
+        {
+            AppPaths.AppendDebugLog($"[update] 备份 {path} 失败：{ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>还原（或直接丢弃）MoveAside 暂存起来的文件/目录。</summary>
+    private static void RestoreAside(string? backupRoot, string originalPath, bool discard)
+    {
+        if (backupRoot is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var moved = Path.Combine(backupRoot, Path.GetFileName(originalPath));
+
+            if (!discard)
+            {
+                if (File.Exists(moved))
+                {
+                    File.Move(moved, originalPath, true);
+                }
+                else if (Directory.Exists(moved))
+                {
+                    if (Directory.Exists(originalPath))
+                    {
+                        Directory.Delete(originalPath, true);
+                    }
+
+                    Directory.Move(moved, originalPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppPaths.AppendDebugLog($"[update] 还原 {originalPath} 失败：{ex.Message}");
+        }
+        finally
+        {
+            TryDeleteDirectory(backupRoot);
+
+            var parent = Path.GetDirectoryName(backupRoot);
+            if (!string.IsNullOrWhiteSpace(parent))
+            {
+                TryDeleteDirectory(Path.Combine(parent, ".aurora-backup"));
+            }
+        }
+    }
+
+    private static string LoaderLabel(ModLoaderKind loader) => loader switch
+    {
+        ModLoaderKind.UnityModManager => "UnityModManager",
+        ModLoaderKind.MelonLoader => "MelonLoader",
+        ModLoaderKind.BepInEx => "BepInEx",
+        _ => loader.DisplayName(),
+    };
 
     private InstallResult InstallUmmCompat(IReadOnlyList<PackageEntry> entries)
     {
@@ -888,7 +1630,9 @@ public sealed class ModService
 
             if (loader == ModLoaderKind.BepInEx &&
                 (entry.Path.StartsWith("Mods/", StringComparison.OrdinalIgnoreCase) ||
-                 entry.Path.StartsWith("Plugins/", StringComparison.OrdinalIgnoreCase) ||
+                 // MelonLoader 的插件目录是 Plugins/（大写 P），要丢掉；
+                 // BepInEx 的约定是小写 plugins/，那正是它自己的目录，必须留着。
+                 entry.Path.StartsWith("Plugins/", StringComparison.Ordinal) ||
                  entry.Path.StartsWith("UserLibs/", StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
@@ -942,6 +1686,32 @@ public sealed class ModService
         IReadOnlyList<PackageEntry> entries,
         string targetRoot,
         string? prefix,
+        bool requireInfoJson) =>
+        ExtractEntries(entries, targetRoot, item => StripPrefix(item.Path, prefix), requireInfoJson);
+
+    /// <summary>不需要剥前缀时（更新时已经算好目标相对路径）。</summary>
+    private static int ExtractEntries(
+        IReadOnlyList<PackageEntry> entries,
+        string targetRoot,
+        bool requireInfoJson) =>
+        ExtractEntries(entries, targetRoot, item => item.Path, requireInfoJson);
+
+    private static string? StripPrefix(string path, string? prefix)
+    {
+        if (string.IsNullOrEmpty(prefix))
+        {
+            return path;
+        }
+
+        return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? path[prefix.Length..]
+            : null;
+    }
+
+    private static int ExtractEntries(
+        IReadOnlyList<PackageEntry> entries,
+        string targetRoot,
+        Func<PackageEntry, string?> map,
         bool requireInfoJson)
     {
         var root = Path.GetFullPath(targetRoot) + Path.DirectorySeparatorChar;
@@ -950,17 +1720,7 @@ public sealed class ModService
 
         foreach (var item in entries)
         {
-            var relative = item.Path;
-            if (!string.IsNullOrEmpty(prefix))
-            {
-                if (!relative.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                relative = relative[prefix.Length..];
-            }
-
+            var relative = map(item);
             if (string.IsNullOrEmpty(relative))
             {
                 continue;
@@ -1140,11 +1900,16 @@ public sealed class ModService
     // 下载安装 / 缓存
     // ==================================================================
 
+    /// <param name="target">
+    /// 更新时传入「当前已安装的那个 mod」，安装就会沿用它原来的加载器与目录；
+    /// 全新安装（从「在线 Mod」页点安装）传 null 即可。
+    /// </param>
     public async Task<InstallResult> InstallFromUrlAsync(
         string url,
         IProgress<int>? progress = null,
         CancellationToken ct = default,
-        string? cacheName = null)
+        string? cacheName = null,
+        InstalledMod? target = null)
     {
         string? temp = null;
         try
@@ -1163,7 +1928,7 @@ public sealed class ModService
 
             await DownloadService.DownloadAsync(Http, url, temp, downloadProgress, ct);
 
-            var result = InstallFromZip(temp);
+            var result = InstallFromZip(temp, target);
 
             if (result.Success && !string.IsNullOrWhiteSpace(cacheName))
             {
@@ -1268,6 +2033,8 @@ public sealed class ModService
                 Directory.Delete(mod.FolderPath, true);
             }
 
+            InvalidateScan();
+
             return new InstallResult(true, $"已卸载 {mod.DisplayName}。", mod.Id);
         }
         catch (Exception ex)
@@ -1283,6 +2050,8 @@ public sealed class ModService
             if (mod.Loader == ModLoaderKind.UnityModManager)
             {
                 Params.SetEnabled(mod.Id, enabled);
+                InvalidateScan();
+
                 return new InstallResult(
                     true,
                     enabled ? $"已启用 {mod.DisplayName}。" : $"已禁用 {mod.DisplayName}。",
@@ -1294,6 +2063,8 @@ public sealed class ModService
             {
                 return new InstallResult(false, "这个 mod 没有可切换的 DLL。");
             }
+
+            InvalidateScan();
 
             return new InstallResult(
                 true,

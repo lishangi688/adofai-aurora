@@ -33,7 +33,15 @@ public static class ModFileSelector
             ?? detail.Versions[0];
     }
 
-    public static ModVersionFile? Pick(ModVersion? version, GameLoaderEnvironment environment)
+    /// <param name="preferredLoader">
+    /// 更新已安装的 mod 时传入它当前所属的加载器：同一个版本常常同时提供 UMM / MelonLoader / BepInEx
+    /// 三个文件，更新必须拿"当初装的那一种"，否则会把 mod 更新成另一个加载器的版本。
+    /// 传 null = 全新安装，按当前环境挑。
+    /// </param>
+    public static ModVersionFile? Pick(
+        ModVersion? version,
+        GameLoaderEnvironment environment,
+        ModLoaderKind? preferredLoader = null)
     {
         if (version is null || version.Files is not { Count: > 0 })
         {
@@ -41,6 +49,16 @@ public static class ModFileSelector
         }
 
         var files = version.Files;
+
+        // 更新：先按当前 mod 的加载器找，找不到再退回按环境选。
+        if (preferredLoader is { } preferred && preferred != ModLoaderKind.Unknown)
+        {
+            var same = files.FirstOrDefault(f => HasLoader(f, LoaderKey(preferred)));
+            if (same is not null)
+            {
+                return same;
+            }
+        }
 
         // 当前实际注入的加载器优先。UMMCompat 也属于“UMM 能用”。
         if (environment.UmmInjectionInstalled || environment.UmmCompatEnabled)
@@ -84,5 +102,14 @@ public static class ModFileSelector
 
     private static bool HasLoader(ModVersionFile file, string loader) =>
         file.Loaders?.Any(l => l.Equals(loader, StringComparison.OrdinalIgnoreCase)) == true;
+
+    /// <summary>加载器 → 资源站文件里使用的名字。</summary>
+    private static string LoaderKey(ModLoaderKind loader) => loader switch
+    {
+        ModLoaderKind.UnityModManager => "unitymodmanager",
+        ModLoaderKind.MelonLoader => "melonloader",
+        ModLoaderKind.BepInEx => "bepinex",
+        _ => "unitymodmanager",
+    };
 }
 

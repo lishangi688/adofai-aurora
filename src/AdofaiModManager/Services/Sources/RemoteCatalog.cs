@@ -186,9 +186,11 @@ public sealed class RemoteInstaller(IRemoteSource source, ModService modService)
         RemoteMod mod,
         RemoteVersion version,
         IProgress<int>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        InstalledMod? target = null)
     {
-        if (mod.Loader == ModLoader.MelonLoader && !modService.Environment.MelonLoaderInstalled)
+        // 更新已安装的 mod：它的加载器本来就在用，不需要再拦"没装 MelonLoader"。
+        if (target is null && mod.Loader == ModLoader.MelonLoader && !modService.Environment.MelonLoaderInstalled)
         {
             return new InstallResult(false, "这个 mod 需要 MelonLoader。请先到「加载器」页安装 MelonLoader（或 MelonLoader + UMMBridge），再回来安装。");
         }
@@ -226,7 +228,7 @@ public sealed class RemoteInstaller(IRemoteSource source, ModService modService)
             ModLoaderHeuristics.LooksLikeMelonLoader(probe.FileName)
             || (probe.Url?.Contains("melonloader", StringComparison.OrdinalIgnoreCase) ?? false);
 
-        if (melonEvidence && !modService.Environment.MelonLoaderInstalled)
+        if (target is null && melonEvidence && !modService.Environment.MelonLoaderInstalled)
         {
             var shown = ModLoaderHeuristics.LooksLikeMelonLoader(probe.FileName)
                 ? probe.FileName
@@ -237,8 +239,9 @@ public sealed class RemoteInstaller(IRemoteSource source, ModService modService)
                 $"这个 mod 的对应版本是 MelonLoader 版（{shown}）。请先到「加载器」页安装 MelonLoader（或 MelonLoader + UMMBridge）。");
         }
 
-        // 走源自己的下载地址（保留它们的下载计数），ModService 会下载 + 解压 + 安装
+        // 走源自己的下载地址（保留它们的下载计数），ModService 会下载 + 解压 + 安装。
+        // 更新时把当前已安装的 mod 传下去，ModService 才知道要装回哪个加载器、哪个目录。
         var cacheName = $"{source.Id}-{mod.Slug}-{version.VersionId}";
-        return await modService.InstallFromUrlAsync(download.Url, progress, ct, cacheName);
+        return await modService.InstallFromUrlAsync(download.Url, progress, ct, cacheName, target);
     }
 }

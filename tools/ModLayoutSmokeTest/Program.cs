@@ -7,6 +7,9 @@ using AdofaiModManager.Services;
 
 var failures = 0;
 
+// 自检只操作临时目录，绕开"游戏正在运行"的拦截（开发机上游戏可能正好开着）。
+GameProcessGuard.Override = () => false;
+
 var rangeCollection = new RangeObservableCollection<int>();
 var rangeView = new ListCollectionView(rangeCollection);
 rangeCollection.AddRange([1, 2, 3]);
@@ -259,6 +262,162 @@ Check("启停：MelonLoader 禁用会把 DLL 改成 .disabled",
 var enable = service.SetEnabled(mlMod, true);
 Check("启停：MelonLoader 启用会恢复 DLL",
     enable.Success && File.Exists(Path.Combine(installRoot, "Mods", "MLMod", "MLMod.dll")));
+
+// ---- 更新：装在哪就按哪种方式更新到哪 ----
+
+// ① 多加载器混合包（UMM + MelonLoader + BepInEx 三个变体）更新已装的 MelonLoader mod
+var updateRoot = CreateSandbox();
+CreateUmmCompatEnvironment(updateRoot);
+WriteFile(Path.Combine(updateRoot, "Mods", "DualMod", "DualMod.dll"), "melon-v1");
+var updateService = new ModService(updateRoot);
+var installedMelon = updateService.Scan().FirstOrDefault(m => m.Id == "DualMod");
+Check("更新准备：扫到 MelonLoader 的 DualMod",
+    installedMelon is { Loader: ModLoaderKind.MelonLoader });
+
+var dualZip = CreateZip("dual.zip", new Dictionary<string, string>
+{
+    ["DualMod/Info.json"] = """{"Id":"DualMod","DisplayName":"Dual Mod","Version":"2.0.0","AssemblyName":"DualMod.dll"}""",
+    ["DualMod/DualMod.dll"] = "umm-variant",
+    ["Mods/DualMod/DualMod.dll"] = "melon-v2",
+    ["BepInEx/plugins/DualMod/DualMod.dll"] = "bep-variant",
+});
+var dualResult = updateService.InstallFromZip(dualZip, installedMelon);
+Check("更新：多加载器包只更新 MelonLoader 那一份（不装成 UMM / BepInEx）",
+    dualResult.Success &&
+    File.ReadAllText(Path.Combine(updateRoot, "Mods", "DualMod", "DualMod.dll")) == "melon-v2" &&
+    !File.Exists(Path.Combine(updateRoot, "Mods", "DualMod", "Info.json")) &&
+    !Directory.Exists(Path.Combine(updateRoot, "UMMMods", "DualMod")) &&
+    !Directory.Exists(Path.Combine(updateRoot, "BepInEx")),
+    dualResult.Message);
+
+// ② 扁平包更新文件夹式 mod：旧文件被替换，不残留
+var stalePath = Path.Combine(updateRoot, "Mods", "DualMod", "OldOnly.dll");
+WriteFile(stalePath, "stale");
+var flatUpdateZip = CreateZip("flat-update.zip", new Dictionary<string, string>
+{
+    ["DualMod/DualMod.dll"] = "melon-v3",
+});
+var flatUpdate = updateService.InstallFromZip(
+    flatUpdateZip,
+    updateService.Scan().FirstOrDefault(m => m.Id == "DualMod"));
+Check("更新：扁平包原地替换文件夹，旧文件不残留",
+    flatUpdate.Success &&
+    File.ReadAllText(Path.Combine(updateRoot, "Mods", "DualMod", "DualMod.dll")) == "melon-v3" &&
+    !File.Exists(stalePath),
+    flatUpdate.Message);
+
+// ③ 禁用状态在更新后保留
+var disabled = updateService.Scan().FirstOrDefault(m => m.Id == "DualMod");
+if (disabled is not null)
+{
+    updateService.SetEnabled(disabled, false);
+    var disabledUpdate = updateService.InstallFromZip(
+        CreateZip("disabled-update.zip", new Dictionary<string, string>
+        {
+            ["DualMod/DualMod.dll"] = "melon-v4",
+        }),
+        updateService.Scan().FirstOrDefault(m => m.Id == "DualMod"));
+
+    Check("更新：禁用中的 mod 更新后仍是禁用",
+        disabledUpdate.Success &&
+        File.Exists(Path.Combine(updateRoot, "Mods", "DualMod", "DualMod.dll.disabled")) &&
+        !File.Exists(Path.Combine(updateRoot, "Mods", "DualMod", "DualMod.dll")),
+        disabledUpdate.Message);
+}
+
+// ④ BepInEx 插件更新仍留在 BepInEx\plugins
+var bepUpdateRoot = CreateSandbox();
+WriteFile(Path.Combine(bepUpdateRoot, "BepInEx", "core", "BepInEx.Preloader.dll"), string.Empty);
+WriteFile(Path.Combine(bepUpdateRoot, "BepInEx", "plugins", "DualBep", "DualBep.dll"), "bep-v1");
+var bepUpdateService = new ModService(bepUpdateRoot);
+var installedBep = bepUpdateService.Scan().FirstOrDefault(m => m.Id == "DualBep");
+var bepUpdateZip = CreateZip("bep-update.zip", new Dictionary<string, string>
+{
+    ["DualBep/Info.json"] = """{"Id":"DualBep","Version":"2.0.0","AssemblyName":"DualBep.dll"}""",
+    ["plugins/DualBep/DualBep.dll"] = "bep-v2",
+});
+var bepUpdate = bepUpdateService.InstallFromZip(bepUpdateZip, installedBep);
+Check("更新：BepInEx 插件更新后仍在 BepInEx/plugins",
+    bepUpdate.Success &&
+    File.ReadAllText(Path.Combine(bepUpdateRoot, "BepInEx", "plugins", "DualBep", "DualBep.dll")) == "bep-v2" &&
+    !Directory.Exists(Path.Combine(bepUpdateRoot, "Mods")),
+    bepUpdate.Message);
+
+// ⑤ UMM 更新：旧文件夹名与 Info.json 的 Id 不同时也不会装出第二份
+var ummUpdateRoot = CreateUmmOnlySandbox();
+WriteFile(Path.Combine(ummUpdateRoot, "Mods", "out", "Info.json"),
+    """{"Id":"AccurateJudgementBar","DisplayName":"AJB","Version":"1.0.0","AssemblyName":"AJB.dll"}""");
+WriteFile(Path.Combine(ummUpdateRoot, "Mods", "out", "AJB.dll"), string.Empty);
+var ummUpdateService = new ModService(ummUpdateRoot);
+var installedUmm = ummUpdateService.Scan().FirstOrDefault(m => m.Id == "AccurateJudgementBar");
+var ummUpdateZip = CreateZip("umm-update.zip", new Dictionary<string, string>
+{
+    ["AccurateJudgementBar/Info.json"] =
+        """{"Id":"AccurateJudgementBar","DisplayName":"AJB","Version":"2.0.0","AssemblyName":"AJB.dll"}""",
+    ["AccurateJudgementBar/AJB.dll"] = "umm-v2",
+});
+var ummUpdate = ummUpdateService.InstallFromZip(ummUpdateZip, installedUmm);
+Check("更新：UMM mod 只保留一份（不会 out 与新 Id 各装一份）",
+    ummUpdate.Success &&
+    ummUpdateService.Scan().Count(m => m.Id == "AccurateJudgementBar") == 1 &&
+    !Directory.Exists(Path.Combine(ummUpdateRoot, "Mods", "out")),
+    ummUpdate.Message);
+
+// ⑥ UMM 的 mod 不会被一个带 Info.json 的 MelonLoader 包更新走
+var ummTargetZip = CreateZip("umm-stay.zip", new Dictionary<string, string>
+{
+    ["AccurateJudgementBar/Info.json"] =
+        """{"Id":"AccurateJudgementBar","DisplayName":"AJB","Version":"3.0.0","AssemblyName":"AJB.dll"}""",
+    ["AccurateJudgementBar/AJB.dll"] = "umm-v3",
+});
+var ummStay = ummUpdateService.InstallFromZip(
+    ummTargetZip,
+    ummUpdateService.Scan().FirstOrDefault(m => m.Id == "AccurateJudgementBar"));
+var ummAfter = ummUpdateService.Scan().FirstOrDefault(m => m.Id == "AccurateJudgementBar");
+Check("更新：UMM mod 仍更新在 UMM 目录",
+    ummStay.Success &&
+    ummAfter is { Loader: ModLoaderKind.UnityModManager, Version: "3.0.0" },
+    ummStay.Message);
+
+// ⑦ 装在 Plugins 的 MelonLoader 插件，碰到只有小写 plugins/ 的包也不会跑到 BepInEx 去
+var pluginUpdateRoot = CreateSandbox();
+WriteFile(Path.Combine(pluginUpdateRoot, "MelonLoader", "MelonLoader.version"), "0.7.3");
+WriteFile(Path.Combine(pluginUpdateRoot, "version.dll"), string.Empty);
+WriteFile(Path.Combine(pluginUpdateRoot, "Plugins", "DualPlugin", "DualPlugin.dll"), "plugin-v1");
+var pluginService = new ModService(pluginUpdateRoot);
+var installedPlugin = pluginService.Scan().FirstOrDefault(m => m.Id == "DualPlugin");
+var pluginUpdate = pluginService.InstallFromZip(
+    CreateZip("plugin-update.zip", new Dictionary<string, string>
+    {
+        ["Plugins/DualPlugin/DualPlugin.dll"] = "plugin-v2",
+    }),
+    installedPlugin);
+Check("更新：Plugins 下的 MelonLoader 插件仍更新在 Plugins",
+    pluginUpdate.Success &&
+    File.ReadAllText(Path.Combine(pluginUpdateRoot, "Plugins", "DualPlugin", "DualPlugin.dll")) == "plugin-v2" &&
+    !Directory.Exists(Path.Combine(pluginUpdateRoot, "BepInEx")),
+    pluginUpdate.Message);
+
+// ⑧ UMM 目录里的 mod 不会被同一个包的 MelonLoader 变体顶掉
+var mixedRoot = CreateUmmOnlySandbox();
+WriteFile(Path.Combine(mixedRoot, "Mods", "MixedMod", "Info.json"),
+    """{"Id":"MixedMod","DisplayName":"Mixed Mod","Version":"1.0.0","AssemblyName":"MixedMod.dll"}""");
+WriteFile(Path.Combine(mixedRoot, "Mods", "MixedMod", "MixedMod.dll"), string.Empty);
+var mixedService = new ModService(mixedRoot);
+var installedMixed = mixedService.Scan().FirstOrDefault(m => m.Id == "MixedMod");
+var mixedUpdate = mixedService.InstallFromZip(
+    CreateZip("mixed-update.zip", new Dictionary<string, string>
+    {
+        ["MixedMod/Info.json"] =
+            """{"Id":"MixedMod","DisplayName":"Mixed Mod","Version":"2.0.0","AssemblyName":"MixedMod.dll"}""",
+        ["MixedMod/MixedMod.dll"] = "umm-v2",
+    }),
+    installedMixed);
+Check("更新：包同时带 Info.json 与 MelonLoader 变体时，UMM mod 仍走 UMM 通道",
+    mixedUpdate.Success &&
+    mixedService.Scan().Count(m => m.Id == "MixedMod") == 1 &&
+    mixedService.Scan().First(m => m.Id == "MixedMod").Loader == ModLoaderKind.UnityModManager,
+    mixedUpdate.Message);
 
 Console.WriteLine();
 Console.WriteLine(failures == 0 ? "所有自检通过。" : $"自检失败：{failures} 项。");
