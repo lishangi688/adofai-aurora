@@ -481,10 +481,12 @@ public partial class SettingsPage : Page
 
             try
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
+                // 用 Shell API 选中导出的诊断包，而不是 explorer.exe /select（后者同样有命令行解析问题）。
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir))
                 {
-                    UseShellExecute = true,
-                });
+                    ShellExplorer.OpenDirectoryAndSelect(dir, Path.GetFileName(path));
+                }
             }
             catch
             {

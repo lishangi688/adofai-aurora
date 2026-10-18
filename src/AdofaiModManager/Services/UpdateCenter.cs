@@ -296,7 +296,7 @@ public sealed class UpdateCenter
                 }
                 else
                 {
-                    var check = await github.CheckAsync(source, mod.Id, mod.Version, ct);
+                    var check = await github.CheckAsync(source, mod.Id, mod.Version, ct, mod.Loader);
                     if (check.Success)
                     {
                         check.SourceLabel = source.Kind == UpdateSourceKind.GitHubRepo || isGitHubHost

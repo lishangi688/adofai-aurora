@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\AppPaths.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\DownloadService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\LoaderService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\KernelService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\InstallResult.cs" />

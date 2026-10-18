@@ -1,0 +1,11 @@
+<UserControl x:Class="AdofaiModManager.Controls.MarkdownViewer"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <FlowDocumentScrollViewer x:Name="Viewer"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              HorizontalScrollBarVisibility="Disabled"
+                              IsToolBarVisible="False"
+                              Padding="0"
+                              VerticalScrollBarVisibility="Disabled" />
+</UserControl>

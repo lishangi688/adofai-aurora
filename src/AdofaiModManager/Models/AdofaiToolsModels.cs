@@ -137,6 +137,10 @@ public sealed class ModDetail
 
     public string? Readme { get; set; }
 
+    /// <summary>详情页 Markdown 展示用：简介为空时回退回 README。</summary>
+    [JsonIgnore]
+    public string? BodyMarkdown => !string.IsNullOrWhiteSpace(Description) ? Description : Readme;
+
     public string? License { get; set; }
 
     public string? SourceUrl { get; set; }
@@ -204,6 +208,14 @@ public sealed class ModVersionFile
     public string? MimeType { get; set; }
 
     public string? DownloadUrl { get; set; }
+
+    public string LoadersLabel => Loaders is not { Count: > 0 }
+        ? string.Empty
+        : string.Join(" / ", Loaders.Select(l => l.Equals("unitymodmanager", StringComparison.OrdinalIgnoreCase)
+            ? "UMM"
+            : l.Equals("melonloader", StringComparison.OrdinalIgnoreCase)
+                ? "MelonLoader"
+                : l));
 
     public string SizeLabel => Size <= 0
         ? string.Empty

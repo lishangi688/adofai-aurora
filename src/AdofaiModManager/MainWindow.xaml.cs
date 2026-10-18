@@ -167,7 +167,7 @@ public partial class MainWindow : FluentWindow
                 return;
             }
 
-            var mods = new ModService(gamePath).Scan();
+            var mods = ModService.Get(gamePath).Scan();
             if (mods.Count == 0)
             {
                 return;

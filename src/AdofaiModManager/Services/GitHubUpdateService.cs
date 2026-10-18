@@ -130,9 +130,14 @@ public sealed class GitHubUpdateService
         return new UpdateSource { Kind = UpdateSourceKind.None };
     }
 
-    public async Task<UpdateCheckResult> CheckAsync(UpdateSource source, string modId, string? localVersion, CancellationToken ct = default)
+    public async Task<UpdateCheckResult> CheckAsync(
+        UpdateSource source,
+        string modId,
+        string? localVersion,
+        CancellationToken ct = default,
+        ModLoaderKind loader = ModLoaderKind.Unknown)
     {
-        var cacheKey = $"{source.Kind}|{source.Url}|{source.Owner}/{source.Repo}|{modId}|{localVersion}";
+        var cacheKey = $"{source.Kind}|{source.Url}|{source.Owner}/{source.Repo}|{modId}|{localVersion}|{loader}";
 
         if (ResultCache.TryGetValue(cacheKey, out var hit))
         {
@@ -143,19 +148,24 @@ public sealed class GitHubUpdateService
             }
         }
 
-        var result = await CheckCoreAsync(source, modId, localVersion, ct);
+        var result = await CheckCoreAsync(source, modId, localVersion, loader, ct);
         ResultCache[cacheKey] = (DateTime.UtcNow, result);
         return result;
     }
 
-    private static async Task<UpdateCheckResult> CheckCoreAsync(UpdateSource source, string modId, string? localVersion, CancellationToken ct)
+    private static async Task<UpdateCheckResult> CheckCoreAsync(
+        UpdateSource source,
+        string modId,
+        string? localVersion,
+        ModLoaderKind loader,
+        CancellationToken ct)
     {
         try
         {
             return source.Kind switch
             {
-                UpdateSourceKind.RepositoryJson => await CheckRepositoryAsync(source.Url!, modId, localVersion, ct),
-                UpdateSourceKind.GitHubRepo => await CheckGitHubAsync(source.Owner!, source.Repo!, modId, localVersion, ct),
+                UpdateSourceKind.RepositoryJson => await CheckRepositoryAsync(source.Url!, modId, localVersion, ct, loader: loader),
+                UpdateSourceKind.GitHubRepo => await CheckGitHubAsync(source.Owner!, source.Repo!, modId, localVersion, loader, ct),
                 _ => new UpdateCheckResult { Success = false, Message = "该 mod 没有可用的更新源。" },
             };
         }
@@ -170,7 +180,8 @@ public sealed class GitHubUpdateService
         string modId,
         string? localVersion,
         CancellationToken ct,
-        bool allowApiFallback = true)
+        bool allowApiFallback = true,
+        ModLoaderKind loader = ModLoaderKind.Unknown)
     {
         try
         {
@@ -185,7 +196,7 @@ public sealed class GitHubUpdateService
             {
                 try
                 {
-                    return await CheckGitHubAsync(owner, repo, modId, localVersion, ct);
+                    return await CheckGitHubAsync(owner, repo, modId, localVersion, loader, ct);
                 }
                 catch
                 {
@@ -229,7 +240,13 @@ public sealed class GitHubUpdateService
         };
     }
 
-    private static async Task<UpdateCheckResult> CheckGitHubAsync(string owner, string repo, string modId, string? localVersion, CancellationToken ct)
+    private static async Task<UpdateCheckResult> CheckGitHubAsync(
+        string owner,
+        string repo,
+        string modId,
+        string? localVersion,
+        ModLoaderKind loader,
+        CancellationToken ct)
     {
         var api = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
         var json = await GetStringAsync(api, ct, gitHubApi: true);
@@ -243,6 +260,7 @@ public sealed class GitHubUpdateService
         string? repositoryJsonUrl = null;
         string? zipUrl = null;
         string? zipName = null;
+        var bestScore = int.MinValue;
 
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
         {
@@ -262,9 +280,15 @@ public sealed class GitHubUpdateService
                 }
                 else if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
-                    var better = zipUrl is null || name.Contains(modId, StringComparison.OrdinalIgnoreCase);
-                    if (better)
+                    // 一个 Release 里常同时放 UMM / MelonLoader / BepInEx 三种包（名字带 _UMM / _ML / _BepInEx）。
+                    // 更新时必须选"当前 mod 所属加载器"的那个，否则会把 mod 更新成别的加载器的版本。
+                    var score = ScoreZipForLoader(name, loader);
+                    var named = name.Contains(modId, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
+                    // 先比加载器匹配度；同等匹配度时优先名字里带 mod Id 的那个。
+                    if (zipUrl is null || score > bestScore || (score == bestScore && named > 0))
                     {
+                        bestScore = score;
                         zipUrl = url;
                         zipName = name;
                     }
@@ -274,7 +298,7 @@ public sealed class GitHubUpdateService
 
         if (repositoryJsonUrl is not null)
         {
-            var result = await CheckRepositoryAsync(repositoryJsonUrl, modId, localVersion, ct, allowApiFallback: false);
+            var result = await CheckRepositoryAsync(repositoryJsonUrl, modId, localVersion, ct, allowApiFallback: false, loader);
             if (result.Success)
             {
                 return result;
@@ -306,6 +330,47 @@ public sealed class GitHubUpdateService
         };
     }
 
+    /// <summary>
+    /// 给 Release 里的 zip 资产按"是不是当前加载器要的那一版"打分（分数越高越合适）。
+    /// 认的是文件名里的标记：ModName_UMM.zip / ModName_ML.zip / ModName_BepInEx.zip。
+    /// </summary>
+    private static int ScoreZipForLoader(string fileName, ModLoaderKind loader)
+    {
+        if (loader == ModLoaderKind.Unknown)
+        {
+            return 1; // 不知道装在哪，就保持旧行为
+        }
+
+        var tokens = fileName.ToLowerInvariant()
+            .Split(['_', '-', '.', ' ', '(', ')'], StringSplitOptions.RemoveEmptyEntries);
+
+        // 整词命中（_ML / -bep / .umm.zip 这些）或包含（adofai-melonloader.zip 这类）
+        bool Has(string word, string contains)
+        {
+            foreach (var token in tokens)
+            {
+                if (token == word || token.Contains(contains, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        var melon = Has("ml", "ml") || Has("melon", "melon");
+        var bep = Has("bep", "bep") || Has("bepinex", "bepinex");
+        var umm = Has("umm", "umm") || Has("unitymodmanager", "unitymodmanager");
+
+        return loader switch
+        {
+            ModLoaderKind.MelonLoader => melon ? 3 : (bep ? 0 : 1),
+            ModLoaderKind.BepInEx => bep ? 3 : (melon ? 0 : 1),
+            ModLoaderKind.UnityModManager => umm ? 3 : (melon || bep ? 0 : 1),
+            _ => 1,
+        };
+    }
+
     private static bool IsNewer(string? remote, string? local)
     {
         if (string.IsNullOrWhiteSpace(remote))
@@ -313,7 +378,7 @@ public sealed class GitHubUpdateService
             return false;
         }
 
-        return local is null || KernelService.CompareVersions(remote, local) > 0;
+        return local is null || VersionScheme.Compare(remote, local) > 0;
     }
 
     private static async Task<string> GetStringAsync(string url, CancellationToken ct, bool gitHubApi = false)

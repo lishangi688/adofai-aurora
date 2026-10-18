@@ -14,14 +14,20 @@ namespace AdofaiModManager.Views.Pages;
 
 public partial class InstalledModsPage : Page
 {
-    private readonly ObservableCollection<InstalledMod> _mods = [];
+    private readonly ObservableCollection<InstalledModGroup> _groups = [];
 
     private bool _busy;
+
+    private CancellationTokenSource? _reloadDebounce;
+
+    private bool _reloading;
+
+    private bool _reloadRequested;
 
     public InstalledModsPage()
     {
         InitializeComponent();
-        ModsList.ItemsSource = _mods;
+        ModsList.ItemsSource = _groups;
         Loaded += async (_, _) =>
         {
             PageScrollFix.DisableOuterPageScrolling(this);
@@ -50,7 +56,34 @@ public partial class InstalledModsPage : Page
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(Reload);
+            Dispatcher.Invoke(ScheduleReload);
+            return;
+        }
+
+        ScheduleReload();
+    }
+
+    /// <summary>
+    /// 更新检查会连续触发好几次 Changed（每个来源改一次状态都会发），
+    /// 每次都整页重建会明显卡顿，所以合并成一次、并且延后一点点再刷。
+    /// </summary>
+    private void ScheduleReload()
+    {
+        _reloadDebounce?.Cancel();
+        _reloadDebounce?.Dispose();
+        _reloadDebounce = new CancellationTokenSource();
+
+        _ = ReloadAfterDelayAsync(_reloadDebounce.Token);
+    }
+
+    private async Task ReloadAfterDelayAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(120, ct);
+        }
+        catch (OperationCanceledException)
+        {
             return;
         }
 
@@ -65,12 +98,43 @@ public partial class InstalledModsPage : Page
             return null;
         }
 
-        return new ModService(gamePath!);
+        return ModService.Get(gamePath!);
     }
 
-    private void Reload()
+    private void Reload() => _ = ReloadAsync();
+
+    /// <summary>
+    /// 整页刷新。扫描游戏目录要读几百个文件、还要解析程序集版本，放在后台线程做，
+    /// 否则切页面 / 更新状态变化时界面会先卡住一下。
+    /// 同时串行化：刷新期间又来了新的刷新请求，只记下来，等这一轮结束后再补一次。
+    /// </summary>
+    private async Task ReloadAsync()
     {
-        _mods.Clear();
+        if (_reloading)
+        {
+            _reloadRequested = true;
+            return;
+        }
+
+        _reloading = true;
+        try
+        {
+            do
+            {
+                _reloadRequested = false;
+                await ReloadCoreAsync();
+            }
+            while (_reloadRequested);
+        }
+        finally
+        {
+            _reloading = false;
+        }
+    }
+
+    private async Task ReloadCoreAsync()
+    {
+        _groups.Clear();
 
         var service = CreateService();
         if (service is null)
@@ -80,24 +144,31 @@ public partial class InstalledModsPage : Page
             return;
         }
 
-        if (!Directory.Exists(service.ModsPath))
-        {
-            SummaryText.Text = $"没有找到 Mods 文件夹：{service.ModsPath}";
-            ShowHint("游戏目录里还没有 Mods 文件夹。\n装过至少一个 mod（或运行过一次游戏）后就会出现。");
-            return;
-        }
-
         var updateService = new GitHubUpdateService(AppServices.UpdateSources);
-        var gameVersion = AppServices.GameVersion;
         var hasCompatibilityInfo = false;
 
         var scanned = new List<InstalledMod>();
 
-        foreach (var mod in service.Scan())
+        // 扫描要遍历 Mods / UMMMods / Plugins / BepInEx\plugins 并解析程序集版本，
+        // 读游戏版本也要读磁盘 —— 全部放后台线程，别让界面先卡住。
+        var (installed, gameVersion, ummVersion) = await Task.Run(() =>
         {
             try
             {
-                ReloadOne(mod, updateService, ref hasCompatibilityInfo);
+                return (service.Scan(), AppServices.GameVersion, service.Environment.UmmVersion);
+            }
+            catch (Exception ex)
+            {
+                AppPaths.AppendDebugLog($"[reload] 扫描 mod 失败：{ex}");
+                return (Array.Empty<InstalledMod>() as IReadOnlyList<InstalledMod>, null, null);
+            }
+        });
+
+        foreach (var mod in installed)
+        {
+            try
+            {
+                ReloadOne(mod, updateService, gameVersion, ummVersion, ref hasCompatibilityInfo);
             }
             catch (Exception ex)
             {
@@ -107,17 +178,14 @@ public partial class InstalledModsPage : Page
             scanned.Add(mod);
         }
 
-        // 可更新的置顶（组内保持原顺序）
-        foreach (var mod in scanned.OrderByDescending(m => m.HasUpdate))
-        {
-            _mods.Add(mod);
-        }
-
-        // 检测"重复安装"：同一个 Id 出现在多个文件夹（历史遗留，例如文件夹名与 Id 不一致）。
-        // 这种副本 UMM 也会当成同一个 mod，容易导致游戏里加载两份，建议清理掉一份。
+        // 检测"重复安装"：同一个加载器下，同一个 Id 出现在多个文件夹。
+        // 不同加载器里的同名 mod 不算重复（例如同一个 mod 的 UMM / MelonLoader 两个包）。
         var hasDuplicate = false;
+        var hasCrossLoader = false;
 
-        foreach (var group in scanned.GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in scanned.GroupBy(
+                     m => $"{(int)m.Loader}\u0001{m.Id}",
+                     StringComparer.OrdinalIgnoreCase))
         {
             var folders = group.ToList();
             if (folders.Count < 2)
@@ -134,28 +202,74 @@ public partial class InstalledModsPage : Page
                     folders.Where(f => !ReferenceEquals(f, mod))
                            .Select(f => $"「{f.FolderName}」{f.Version}"));
 
-                mod.DuplicateWarning = $"⚠ 重复安装：同一个 mod 出现在多个文件夹（另有 {others}）。建议只保留一份。";
+                mod.DuplicateWarning = $"⚠ 重复安装：同一个加载器下出现了多份（另有 {others}）。建议只保留一份。";
             }
         }
 
-        var enabled = _mods.Count(m => m.IsEnabled);
-        var updatable = _mods.Count(m => m.HasUpdate);
-        SummaryText.Text = $"共 {_mods.Count} 个 mod（{enabled} 个已启用"
-            + (updatable > 0 ? $"，{updatable} 个可更新" : string.Empty)
-            + "）"
-            + (string.IsNullOrWhiteSpace(gameVersion) ? string.Empty : $"　·　游戏版本 {gameVersion}")
-            + (service.IsLoaderInstalled ? string.Empty : "　·　⚠ 未检测到 UMM loader");
-
-        if (_mods.Count == 0)
+        // 同一个 Mod 同时装了 UMM 和 MelonLoader 两个版本时，UMMBridge 会把它加载两次。
+        foreach (var sameId in scanned
+                     .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Select(m => m.Loader).Distinct().Count() > 1))
         {
-            ShowHint("Mods 文件夹是空的。\n点右上角「安装本地 zip」安装一个 mod。");
+            var loaders = sameId.Select(m => m.Loader).Distinct().ToList();
+            if (!loaders.Contains(ModLoaderKind.UnityModManager) ||
+                !loaders.Contains(ModLoaderKind.MelonLoader))
+            {
+                continue;
+            }
+
+            hasCrossLoader = true;
+            foreach (var mod in sameId)
+            {
+                mod.CrossLoaderWarning =
+                    "⚠ 同一个 Mod 同时安装在 UnityModManager 和 MelonLoader 中；使用 UMMBridge 时可能被加载两次并导致游戏崩溃，建议只保留一个版本。";
+            }
+        }
+
+        // 按加载器分组；组内把可更新的放前面。
+        foreach (var loaderGroup in scanned
+                     .GroupBy(m => m.Loader)
+                     .OrderBy(g => g.Key switch
+                     {
+                         ModLoaderKind.UnityModManager => 0,
+                         ModLoaderKind.MelonLoader => 1,
+                         ModLoaderKind.BepInEx => 2,
+                         _ => 3,
+                     }))
+        {
+            var mods = new ObservableCollection<InstalledMod>(
+                loaderGroup.OrderByDescending(m => m.HasUpdate));
+
+            if (mods.Count > 0)
+            {
+                _groups.Add(new InstalledModGroup { Loader = loaderGroup.Key, Mods = mods });
+            }
+        }
+
+        var total = scanned.Count;
+        var enabled = scanned.Count(m => m.IsEnabled);
+        var updatable = scanned.Count(m => m.HasUpdate);
+
+        SummaryText.Text = $"{total} 个 Mod　·　{enabled} 个已启用"
+            + (updatable > 0 ? $"　·　{updatable} 个可更新" : string.Empty)
+            + (string.IsNullOrWhiteSpace(gameVersion) ? string.Empty : $"　·　游戏 {gameVersion}")
+            + (service.Environment.HasInjection ? string.Empty : "　·　⚠ 未检测到有效加载器注入");
+
+        if (total == 0)
+        {
+            ShowHint(
+                "没有找到任何加载器下的 mod。\n"
+                + $"UMM：{service.ModsPath}\n"
+                + $"MelonLoader：{service.MelonModsPath}\n"
+                + $"BepInEx：{service.BepInExPluginsPath}\n\n"
+                + "点右上角「安装本地 zip」安装一个 mod。");
         }
         else
         {
             HideHint();
         }
 
-        if (hasCompatibilityInfo || hasDuplicate)
+        if (hasCompatibilityInfo || hasDuplicate || hasCrossLoader)
         {
             var reasons = new List<string>();
 
@@ -166,18 +280,27 @@ public partial class InstalledModsPage : Page
 
             if (hasDuplicate)
             {
-                reasons.Add("有 mod 重复安装（同一个 mod 出现在多个文件夹）");
+                reasons.Add("有 mod 重复安装（同一个加载器下出现多份）");
+            }
+
+            if (hasCrossLoader)
+            {
+                reasons.Add("有 mod 同时装在 UMM 和 MelonLoader 中，UMMBridge 下可能冲突");
             }
 
             StatusBar.Severity = InfoBarSeverity.Warning;
-            StatusBar.Title = hasDuplicate ? "需要处理的提醒" : "版本兼容提醒";
+            StatusBar.Title = hasDuplicate || hasCrossLoader ? "需要处理的提醒" : "版本兼容提醒";
             StatusBar.Message = string.Join("；", reasons) + "。详情见各条目里的提示。";
             StatusBar.IsOpen = true;
+        }
+        else
+        {
+            StatusBar.IsOpen = false;
         }
 
         if (AppPaths.DebugLogEnabled)
         {
-            Dispatcher.BeginInvoke(
+            _ = Dispatcher.BeginInvoke(
                 new Action(() => AppPaths.AppendDebugLog(
                     $"[installed] Extent={ModsScroller.ExtentHeight} Viewport={ModsScroller.ViewportHeight} Scrollable={ModsScroller.ScrollableHeight}")),
                 System.Windows.Threading.DispatcherPriority.Loaded);
@@ -188,22 +311,27 @@ public partial class InstalledModsPage : Page
     /// 处理单个已安装 mod 的显示字段（更新源 / 更新状态 / 图标 / 兼容性提示）。
     /// 单独抽出来是为了让调用方能逐个 try/catch —— 任何一个 mod 出问题都不该影响其它卡片。
     /// </summary>
-    private void ReloadOne(InstalledMod mod, GitHubUpdateService updateService, ref bool hasCompatibilityInfo)
+    private void ReloadOne(
+        InstalledMod mod,
+        GitHubUpdateService updateService,
+        string? gameVersion,
+        string? ummVersion,
+        ref bool hasCompatibilityInfo)
     {
         var source = updateService.ResolveSource(mod);
         var site = AppServices.Updates.FindSiteMod(mod);
 
         if (source.Kind != UpdateSourceKind.None)
         {
-            mod.UpdateSourceLabel = $"更新源：{source.Description}{(source.IsManual ? "（手动）" : string.Empty)}";
+            mod.UpdateSourceLabel = $"更新源：{FriendlySource(source)}{(source.IsManual ? "（手动）" : string.Empty)}";
         }
         else if (site is not null)
         {
-            mod.UpdateSourceLabel = "更新源：ADOFAITools";
+            mod.UpdateSourceLabel = $"更新源：{AppServices.SiteDisplayName}";
         }
         else
         {
-            mod.UpdateSourceLabel = "更新源：未设置（可点「绑定 GitHub」手动指定）";
+            mod.UpdateSourceLabel = string.Empty;
         }
 
         // 图标尽量与资源站保持一致（走本地图标缓存，不会每次重新下载）
@@ -238,19 +366,51 @@ public partial class InstalledModsPage : Page
             mod.UpdateFileName = result.FileName;
         }
 
-        var gameVersion = AppServices.GameVersion;
-
+        // UMM 的 Info.json.GameVersion 语义是“最低游戏版本”，不是精确版本。
+        // 只有当前游戏版本低于它时才提示；游戏更新到更高版本不应误报。
         if (!string.IsNullOrWhiteSpace(mod.GameVersion) &&
             !string.IsNullOrWhiteSpace(gameVersion) &&
-            !VersionsMatch(mod.GameVersion!, gameVersion!))
+            KernelService.CompareVersions(mod.GameVersion, gameVersion) > 0)
         {
-            mod.CompatibilityWarning = $"⚠ 该 mod 要求游戏 {mod.GameVersion}，当前检测为 {gameVersion}";
+            mod.CompatibilityWarning = $"⚠ 该 mod 要求游戏至少 {mod.GameVersion}，当前检测为 {gameVersion}";
+            hasCompatibilityInfo = true;
+        }
+
+        // UMM 的 ManagerVersion 同样是“最低 UMM 版本”。
+        if (mod.Loader == ModLoaderKind.UnityModManager &&
+            !string.IsNullOrWhiteSpace(mod.ManagerVersion) &&
+            !string.IsNullOrWhiteSpace(ummVersion) &&
+            KernelService.CompareVersions(mod.ManagerVersion, ummVersion) > 0)
+        {
+            mod.CompatibilityWarning = string.IsNullOrWhiteSpace(mod.CompatibilityWarning)
+                ? $"⚠ 该 mod 要求 UMM 至少 {mod.ManagerVersion}，当前为 {ummVersion}"
+                : mod.CompatibilityWarning + $"\n⚠ 该 mod 要求 UMM 至少 {mod.ManagerVersion}，当前为 {ummVersion}";
             hasCompatibilityInfo = true;
         }
     }
 
-    private static bool VersionsMatch(string a, string b) =>
-        KernelService.CompareVersions(a, b) == 0;
+    private static string FriendlySource(UpdateSource source)
+    {
+        if (source.Kind == UpdateSourceKind.GitHubRepo)
+        {
+            return "GitHub";
+        }
+
+        if (!string.IsNullOrWhiteSpace(source.Url))
+        {
+            if (source.Url.Contains("github", StringComparison.OrdinalIgnoreCase))
+            {
+                return "GitHub";
+            }
+
+            if (Uri.TryCreate(source.Url, UriKind.Absolute, out var uri))
+            {
+                return uri.Host;
+            }
+        }
+
+        return "自定义源";
+    }
 
     private void ShowHint(string text)
     {
@@ -325,9 +485,9 @@ public partial class InstalledModsPage : Page
         Reload();
     }
 
-    private void ToggleEnabled_Click(object sender, RoutedEventArgs e)
+    private void ToggleEnabled_Changed(object sender, RoutedEventArgs e)
     {
-        if (sender is not CheckBox checkBox || checkBox.DataContext is not InstalledMod mod)
+        if (sender is not ToggleSwitch toggle || toggle.DataContext is not InstalledMod mod)
         {
             return;
         }
@@ -338,9 +498,36 @@ public partial class InstalledModsPage : Page
             return;
         }
 
-        var result = service.SetEnabled(mod, checkBox.IsChecked == true);
+        var result = service.SetEnabled(mod, toggle.IsChecked == true);
         Report(result.Success, result.Message);
         Reload();
+    }
+
+    /// <summary>卡片右侧的「⋯」：把低频操作收进菜单，保持列表简洁。</summary>
+    private void More_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not InstalledMod mod)
+        {
+            return;
+        }
+
+        var menu = new ContextMenu();
+
+        System.Windows.Controls.MenuItem Item(string header, RoutedEventHandler handler)
+        {
+            var item = new System.Windows.Controls.MenuItem { Header = header, DataContext = mod };
+            item.Click += handler;
+            return item;
+        }
+
+        menu.Items.Add(Item("检查更新", CheckUpdate_Click));
+        menu.Items.Add(Item("绑定 GitHub", BindGitHub_Click));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("打开文件夹", OpenFolder_Click));
+        menu.Items.Add(Item("卸载", Uninstall_Click));
+
+        menu.PlacementTarget = element;
+        menu.IsOpen = true;
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -352,10 +539,10 @@ public partial class InstalledModsPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{mod.FolderPath}\"")
-            {
-                UseShellExecute = true,
-            });
+            // MelonLoader / BepInEx 的单个 DLL mod，FolderPath 是文件：
+            // ShellExplorer 会打开它所在目录并选中该文件。
+            // 注意不能用 explorer.exe "路径"——带引号的命令行参数经常被忽略，会退化成打开「文档」。
+            ShellExplorer.OpenFolder(mod.FolderPath);
         }
         catch (Exception ex)
         {
@@ -427,7 +614,8 @@ public partial class InstalledModsPage : Page
     private static async Task<InstallResult?> InstallFromSiteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        InstalledMod? target = null)
     {
         var client = BuildSiteClient();
         if (client is null || string.IsNullOrWhiteSpace(result.SiteSlug))
@@ -436,14 +624,15 @@ public partial class InstalledModsPage : Page
         }
 
         var detail = await client.GetModDetailAsync(result.SiteResourceType ?? "MOD", result.SiteSlug!);
-        return await new SiteInstaller(client, service).InstallAsync(detail, progress);
+        return await new SiteInstaller(client, service).InstallAsync(detail, progress, target: target);
     }
 
     /// <summary>按第三方源（TUF / modlist）的信息安装更新（返回 null 表示解析不到）。</summary>
     private static async Task<InstallResult?> InstallFromRemoteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        InstalledMod target)
     {
         var source = RemoteSources.ById(result.RemoteSourceId);
         if (source is null || string.IsNullOrWhiteSpace(result.RemoteSlug))
@@ -466,7 +655,7 @@ public partial class InstalledModsPage : Page
             return null;
         }
 
-        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress);
+        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress, target: target);
     }
 
     private async void Update_Click(object sender, RoutedEventArgs e)
@@ -476,6 +665,8 @@ public partial class InstalledModsPage : Page
             return;
         }
 
+        // MelonLoader / BepInEx 的 mod 也能更新：本质上都是"下载 zip 再装回去"，
+        // 装的时候带上 mod.Loader 和它原来的位置，保证还是装回同一个地方。
         var result = AppServices.Updates.Get(mod);
         if (result is null || !result.UpdateAvailable)
         {
@@ -507,7 +698,7 @@ public partial class InstalledModsPage : Page
             if (!string.IsNullOrWhiteSpace(result.RemoteSourceId))
             {
                 // 更新来自第三方源（TUF / modlist）：解析下载地址 → 校验 → 安装
-                var fromRemote = await InstallFromRemoteAsync(service, result, progress);
+                var fromRemote = await InstallFromRemoteAsync(service, result, progress, mod);
                 if (fromRemote is null)
                 {
                     Report(false, $"该更新来自 {result.SourceLabel}，但没能解析出可用的下载地址。");
@@ -522,12 +713,13 @@ public partial class InstalledModsPage : Page
                     ? null
                     : $"{mod.Id}-{result.RemoteVersion}";
 
-                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName);
+                // 带上 mod 本身：更新时按它原来的加载器与目录装回去。
+                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName, mod);
 
                 // GitHub 下载失败（代理挂了 / 被墙）→ 自动改用资源站那一版，别让用户卡住
                 if (!install.Success && result.HasSiteFallback)
                 {
-                    var fallback = await InstallFromSiteAsync(service, result, progress);
+                    var fallback = await InstallFromSiteAsync(service, result, progress, mod);
                     if (fallback is not null)
                     {
                         install = fallback;
@@ -537,7 +729,7 @@ public partial class InstalledModsPage : Page
             }
             else if (result.HasSiteFallback)
             {
-                var fromSite = await InstallFromSiteAsync(service, result, progress);
+                var fromSite = await InstallFromSiteAsync(service, result, progress, mod);
                 if (fromSite is null)
                 {
                     Report(false, $"该更新来自 {AppServices.SiteDisplayName}，但未配置 API key。");

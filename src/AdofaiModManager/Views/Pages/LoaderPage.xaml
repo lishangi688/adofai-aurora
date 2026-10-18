@@ -4,7 +4,7 @@
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
       xmlns:svc="clr-namespace:AdofaiModManager.Services"
       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-      Title="UMM 环境">
+      Title="加载器环境">
     <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -13,12 +13,12 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0">
-            <TextBlock FontSize="28" FontWeight="SemiBold" Text="UMM 环境" />
+            <TextBlock FontSize="28" FontWeight="SemiBold" Text="加载器环境" />
             <TextBlock x:Name="SubtitleText"
                        Margin="0,4,0,0"
                        Opacity="0.6"
                        TextWrapping="Wrap"
-                       Text="检测和管理游戏里的 mod 加载器（原本由 UnityModManager 负责注入）。" />
+                       Text="管理 UnityModManager、MelonLoader、BepInEx 和 UMMBridge。" />
         </StackPanel>
 
         <ui:InfoBar x:Name="StatusBar"
@@ -48,22 +48,22 @@
                            Margin="0,0,8,8"
                            Appearance="Primary"
                            Click="Install_Click"
-                           Content="安装 / 修复加载器"
+                           Content="安装 / 切换加载器"
                            Icon="{ui:SymbolIcon Symbol=ShieldCheckmark24}" />
                 <ui:Button x:Name="CheckUpdateButton"
                            Margin="0,0,8,8"
                            Click="CheckUpdate_Click"
-                           Content="检查内核更新"
+                           Content="更新 UMM 内核"
                            Icon="{ui:SymbolIcon Symbol=ArrowSync24}" />
                 <ui:Button x:Name="RollbackButton"
                            Margin="0,0,8,8"
                            Click="Rollback_Click"
-                           Content="回滚内核"
+                           Content="回滚 UMM 内核"
                            Icon="{ui:SymbolIcon Symbol=ArrowUndo24}" />
                 <ui:Button x:Name="UninstallButton"
                            Margin="0,0,8,8"
                            Click="Uninstall_Click"
-                           Content="卸载加载器"
+                           Content="卸载 UMM 注入"
                            Icon="{ui:SymbolIcon Symbol=Delete24}" />
                 <ui:Button Margin="0,0,8,8"
                            Click="OpenGameFolder_Click"
@@ -85,11 +85,6 @@
                            ToolTip="直接运行游戏 exe：启动更快、不必等 Steam；但成就 / 云存档可能不同步" />
             </WrapPanel>
 
-            <TextBlock Margin="0,16,0,0"
-                       FontSize="12"
-                       Opacity="0.55"
-                       TextWrapping="Wrap"
-                       Text="说明：加载器采用 UnityDoorstop（DoorstopProxy）方式注入，只会在游戏目录写入 winhttp.dll、doorstop_config.ini，并在 ..._Data\Managed\UnityModManager 下放置加载器文件。卸载会移除这些文件（不影响 Mods 里的 mod）。" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

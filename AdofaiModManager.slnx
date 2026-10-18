@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/LoaderSmokeTest/LoaderSmokeTest.csproj" />
+    <Project Path="tools/ModLayoutSmokeTest/ModLayoutSmokeTest.csproj" />
     <Project Path="tools/UpdateSmokeTest/UpdateSmokeTest.csproj" />
   </Folder>
 </Solution>

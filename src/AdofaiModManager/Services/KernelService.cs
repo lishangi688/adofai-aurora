@@ -203,7 +203,15 @@ public sealed class KernelService
     // ① 从资源站「工具库」获取最新 UMM；② 用户导入本地 zip。
 
     /// <summary>下载（并校验、解压）一个内核版本到本地。</summary>
-    public async Task<(KernelInfo? Kernel, string Message)> DownloadAsync(KernelRelease release, CancellationToken ct = default)
+    public Task<(KernelInfo? Kernel, string Message)> DownloadAsync(
+        KernelRelease release,
+        CancellationToken ct = default) =>
+        DownloadAsync(release, null, ct);
+
+    public async Task<(KernelInfo? Kernel, string Message)> DownloadAsync(
+        KernelRelease release,
+        IProgress<DownloadProgress>? progress,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(release.Version))
         {
@@ -229,10 +237,7 @@ public sealed class KernelService
             }
             else
             {
-                using var response = await Http.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-                response.EnsureSuccessStatusCode();
-                await using var file = File.Create(tempZip);
-                await response.Content.CopyToAsync(file, ct);
+                await DownloadService.DownloadAsync(Http, release.DownloadUrl, tempZip, progress, ct);
             }
 
             if (!string.IsNullOrWhiteSpace(release.Sha256))
@@ -304,7 +309,8 @@ public sealed class KernelService
     public async Task<(KernelInfo? Kernel, string Message)> ImportAsync(
         string source,
         string? version = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<DownloadProgress>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(source))
         {
@@ -318,7 +324,7 @@ public sealed class KernelService
             Notes = "本地导入 / 手动指定",
         };
 
-        var (kernel, message) = await DownloadAsync(release, ct);
+        var (kernel, message) = await DownloadAsync(release, progress, ct);
         if (kernel is null)
         {
             return (null, message);
