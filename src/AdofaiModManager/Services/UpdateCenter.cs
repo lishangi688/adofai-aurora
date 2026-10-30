@@ -18,6 +18,9 @@ public sealed class UpdateCenter
 
     private readonly Dictionary<string, UpdateCheckResult> _results = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>更新检查现在会并发写 _results，读写都要拿这把锁。</summary>
+    private readonly object _resultsLock = new();
+
     private readonly Dictionary<string, SiteModMatch> _siteMap = new(StringComparer.OrdinalIgnoreCase);
 
     private DateTime _siteMapTime = DateTime.MinValue;
@@ -101,14 +104,24 @@ public sealed class UpdateCenter
 
     public void Set(string modId, UpdateCheckResult result)
     {
-        _results[modId] = result;
+        lock (_resultsLock)
+        {
+            _results[modId] = result;
+        }
+
         Recount();
         Changed?.Invoke();
     }
 
     public void Clear(string modId)
     {
-        if (_results.Remove(modId))
+        bool removed;
+        lock (_resultsLock)
+        {
+            removed = _results.Remove(modId);
+        }
+
+        if (removed)
         {
             Recount();
             Changed?.Invoke();
@@ -119,7 +132,11 @@ public sealed class UpdateCenter
 
     public void ClearAll()
     {
-        _results.Clear();
+        lock (_resultsLock)
+        {
+            _results.Clear();
+        }
+
         Recount();
         Changed?.Invoke();
     }
@@ -215,7 +232,6 @@ public sealed class UpdateCenter
         }
 
         AppPaths.AppendDebugLog($"[check] 开始检查 {mods.Count} 个 mod");
-
         var gitHubState = await ResolveGitHubStateAsync(ct);
         AppPaths.AppendDebugLog($"[check] GitHub 状态 = {gitHubState}（{stopwatch.ElapsedMilliseconds}ms）");
 
@@ -223,15 +239,38 @@ public sealed class UpdateCenter
         await EnsureSiteMapAsync(ct: ct);
         AppPaths.AppendDebugLog($"[check] 站点映射就绪，{_siteMap.Count} 条（{stopwatch.ElapsedMilliseconds}ms）");
 
-        foreach (var mod in mods)
-        {
-            ct.ThrowIfCancellationRequested();
-            progress?.Report(mod.DisplayName);
+        // 第三方源：同样预取一次（并发检查时如果每个 mod 各自去拉，会重复请求同一个站点）
+        await GetRemoteMapAsync(ct);
+        AppPaths.AppendDebugLog($"[check] 第三方源映射就绪，{_remoteMap.Count} 条（{stopwatch.ElapsedMilliseconds}ms）");
 
-            var before = stopwatch.ElapsedMilliseconds;
-            _results[mod.UpdateKey] = await CheckOneCoreAsync(mod, github, gitHubState, ct);
-            AppPaths.AppendDebugLog($"[check] {mod.Id} 用时 {stopwatch.ElapsedMilliseconds - before}ms");
-        }
+        // 并发检查（限 6 个）：以前是串行，第一个 GitHub 请求的冷启动（DNS + 代理 + TLS + 跳转，
+        // 实测约 10 秒）会把总时长整个拉满；其余 mod 明明只要几百毫秒。
+        const int maxParallel = 6;
+        using var gate = new SemaphoreSlim(maxParallel, maxParallel);
+
+        await Task.WhenAll(mods.Select(async mod =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                progress?.Report(mod.DisplayName);
+
+                var before = stopwatch.ElapsedMilliseconds;
+                var result = await CheckOneCoreAsync(mod, github, gitHubState, ct);
+
+                lock (_resultsLock)
+                {
+                    _results[mod.UpdateKey] = result;
+                }
+
+                AppPaths.AppendDebugLog($"[check] {mod.Id} 用时 {stopwatch.ElapsedMilliseconds - before}ms");
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
 
         HasChecked = true;
         Recount();

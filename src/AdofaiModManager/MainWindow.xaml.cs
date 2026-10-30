@@ -205,7 +205,11 @@ public partial class MainWindow : FluentWindow
     {
         if (sender.SelectedItem is INavigationViewItem item && item.TargetPageType is { } pageType)
         {
+            // 切页会同步构造目标页面（页面构造 / Loaded 里的同步工作会直接卡住切换动画），
+            // 记一笔耗时，方便判断"顿一下"是不是页面初始化导致的。
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             sender.Navigate(pageType, null);
+            AppPaths.AppendDebugLog($"[perf] 导航 -> {pageType.Name} {stopwatch.ElapsedMilliseconds}ms");
 
             AppServices.Settings.Settings.LastPage = pageType.Name;
             AppServices.Settings.Save();

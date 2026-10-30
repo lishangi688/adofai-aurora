@@ -30,7 +30,15 @@ public partial class InstalledModsPage : Page
             AppServices.Updates.Changed += OnUpdatesChanged;
 
             PageScrollFix.DisableOuterPageScrolling(this);
-            Reload();
+
+            // 先把切换动画让出去，再做列表重建：Reload 实测约 100ms，
+            // 同步跑在 Loaded 里会把页面切换动画拖住（看起来"顿一下才出来"）。
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                var reloadWatch = System.Diagnostics.Stopwatch.StartNew();
+                Reload();
+                AppPaths.AppendDebugLog($"[perf] 已安装页 Reload {reloadWatch.ElapsedMilliseconds}ms（{_mods.Count} 个）");
+            }), System.Windows.Threading.DispatcherPriority.Background);
 
             // 拉一次资源站映射，用于显示"更新源：资源站"和同步图标；
             // 完成后会触发 Changed → 本页自动再刷新一次
