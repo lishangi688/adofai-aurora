@@ -264,7 +264,10 @@ public sealed class UpdateCenter
                     _results[mod.UpdateKey] = result;
                 }
 
-                AppPaths.AppendDebugLog($"[check] {mod.Id} 用时 {stopwatch.ElapsedMilliseconds - before}ms");
+                var detail = result.Success
+                    ? (result.UpdateAvailable ? $"有更新 {result.RemoteVersion}" : "已是最新")
+                    : $"失败：{result.Message}";
+                AppPaths.AppendDebugLog($"[check] {mod.Id} 用时 {stopwatch.ElapsedMilliseconds - before}ms · {detail}");
             }
             finally
             {

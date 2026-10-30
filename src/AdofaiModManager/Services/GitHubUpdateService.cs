@@ -238,14 +238,56 @@ public sealed class GitHubUpdateService
 
     private static async Task<UpdateCheckResult> CheckGitHubAsync(string owner, string repo, string modId, string? localVersion, CancellationToken ct)
     {
-        var api = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
-        var json = await GetStringAsync(api, ct, gitHubApi: true);
+        // 版本号用「302 跳转」取，不消耗 API 额度：
+        //   GET https://github.com/{owner}/{repo}/releases/latest
+        //   → 302 Location: https://github.com/{owner}/{repo}/releases/tag/v1.2.3
+        // 匿名 api.github.com 只有 60 次/小时，以前每次检查都要打一次，很容易被限流。
+        var tag = await TryGetLatestTagAsync(owner, repo, ct);
+
+        if (tag is null)
+        {
+            return new UpdateCheckResult
+            {
+                Success = false,
+                Message = $"仓库 {owner}/{repo} 没有找到 Release（或仓库不可访问）。",
+            };
+        }
+
+        var available = IsNewer(tag, localVersion);
+
+        // 没有更新：到此为止，完全不碰 API
+        if (!available)
+        {
+            return new UpdateCheckResult
+            {
+                Success = true,
+                UpdateAvailable = false,
+                LocalVersion = localVersion,
+                RemoteVersion = tag,
+            };
+        }
+
+        // 有更新才需要资产列表（拿下载地址），这一步仍然要用 API；
+        // 被限流时不要报"检查失败"——版本已经确认了，让用户去发布页手动下载。
+        string json;
+        try
+        {
+            json = await GetStringAsync($"https://api.github.com/repos/{owner}/{repo}/releases/latest", ct, gitHubApi: true);
+        }
+        catch (Exception ex)
+        {
+            return new UpdateCheckResult
+            {
+                Success = true,
+                UpdateAvailable = true,
+                LocalVersion = localVersion,
+                RemoteVersion = tag,
+                Message = $"发现新版本 {tag}，但获取下载地址失败（{ex.Message}）。可到发布页手动下载。",
+            };
+        }
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-
-        var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
-        tag = tag?.TrimStart('v', 'V');
 
         string? repositoryJsonUrl = null;
         string? zipUrl = null;
@@ -297,8 +339,6 @@ public sealed class GitHubUpdateService
             };
         }
 
-        var available = IsNewer(tag, localVersion);
-
         return new UpdateCheckResult
         {
             Success = true,
@@ -311,6 +351,62 @@ public sealed class GitHubUpdateService
                 ? $"发现新版本 {tag}（{zipName}）"
                 : $"已是最新（{localVersion ?? "未知"}）",
         };
+    }
+
+    /// <summary>
+    /// 用 GitHub 网页的 302 跳转取最新 tag：
+    ///   GET https://github.com/{owner}/{repo}/releases/latest
+    ///   → 302 Location: .../releases/tag/v1.2.3
+    /// 这条路径不消耗 api.github.com 的匿名额度（60 次/小时），作为默认的版本检查方式。
+    /// 网页不可达 / 结构变化时回退到接口，保证行为不会比旧版本差。
+    /// </summary>
+    private static async Task<string?> TryGetLatestTagAsync(string owner, string repo, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await Http.GetAsync(
+                $"https://github.com/{owner}/{repo}/releases/latest",
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var path = response.RequestMessage?.RequestUri?.AbsolutePath ?? string.Empty;
+
+                const string marker = "/releases/tag/";
+                var index = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0)
+                {
+                    var tag = Uri.UnescapeDataString(path[(index + marker.Length)..]).Trim('/');
+                    if (!string.IsNullOrWhiteSpace(tag))
+                    {
+                        return tag.TrimStart('v', 'V');
+                    }
+                }
+
+                // 跳到了 /releases（而不是 tag 页）：这个仓库没有任何 Release
+                if (path.EndsWith("/releases", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+            }
+        }
+        catch
+        {
+            // 网页不可达：走下面的接口回退
+        }
+
+        try
+        {
+            var json = await GetStringAsync($"https://api.github.com/repos/{owner}/{repo}/releases/latest", ct, gitHubApi: true);
+            using var document = JsonDocument.Parse(json);
+            var tag = document.RootElement.TryGetProperty("tag_name", out var element) ? element.GetString() : null;
+            return string.IsNullOrWhiteSpace(tag) ? null : tag.TrimStart('v', 'V');
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool IsNewer(string? remote, string? local)
