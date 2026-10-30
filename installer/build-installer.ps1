@@ -15,7 +15,7 @@
 #             客户端按自己的形态取用（绿色版用 portable\，安装版取 Setup.exe）。
 
 param(
-    [string]$Version = "0.1.10",
+    [string]$Version = "0.1.11",
     [switch]$Installer
 )
 

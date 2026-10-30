@@ -10,7 +10,7 @@
     <Product>Aurora</Product>
     <AssemblyName>Aurora</AssemblyName>
     <RootNamespace>AdofaiModManager</RootNamespace>
-    <Version>0.1.10</Version>
+    <Version>0.1.11</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
