@@ -406,31 +406,42 @@ public sealed class UpdateCenter
 
         var map = new Dictionary<string, List<(IRemoteSource Source, RemoteMod Mod)>>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var source in RemoteSources.All)
+        // 各源并发拉取：以前是串行，TUF 慢的时候会把总时长整个拖满（网页走代理时
+        // 两个源各 4~5 秒，串行就是 9 秒；并发之后只等最慢的那个）。
+        var fetched = await Task.WhenAll(RemoteSources.All.Select(async source =>
         {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(30));
 
                 var page = await source.GetModsAsync(new RemoteModQuery(Page: 1, PageSize: 500), timeout.Token);
-
-                foreach (var mod in page.Items)
-                {
-                    foreach (var key in RemoteCatalog.Keys(mod))
-                    {
-                        if (!map.TryGetValue(key, out var list))
-                        {
-                            map[key] = list = [];
-                        }
-
-                        list.Add((source, mod));
-                    }
-                }
+                var items = page.Items.ToList();
+                AppPaths.AppendDebugLog($"[check] 源 {source.Id} 取到 {items.Count} 条（{watch.ElapsedMilliseconds}ms）");
+                return (Source: source, Mods: items);
             }
-            catch
+            catch (Exception ex)
             {
                 // 这个源不可用：跳过
+                AppPaths.AppendDebugLog($"[check] 源 {source.Id} 不可用（{watch.ElapsedMilliseconds}ms）：{ex.Message}");
+                return (Source: source, Mods: new List<RemoteMod>());
+            }
+        }));
+
+        foreach (var (source, mods) in fetched)
+        {
+            foreach (var mod in mods)
+            {
+                foreach (var key in RemoteCatalog.Keys(mod))
+                {
+                    if (!map.TryGetValue(key, out var list))
+                    {
+                        map[key] = list = [];
+                    }
+
+                    list.Add((source, mod));
+                }
             }
         }
 
