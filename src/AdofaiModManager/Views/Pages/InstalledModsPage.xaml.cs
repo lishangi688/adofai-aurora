@@ -59,13 +59,15 @@ public partial class InstalledModsPage : Page
 
     private void OnUpdatesChanged()
     {
+        // 检查完成时会触发一次；Reload 约 100ms，用 Background 优先级延后，
+        // 避免正好赶上页面切换/动画时"顿一下"。
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(Reload);
+            _ = Dispatcher.BeginInvoke(new Action(Reload), System.Windows.Threading.DispatcherPriority.Background);
             return;
         }
 
-        Reload();
+        _ = Dispatcher.BeginInvoke(new Action(Reload), System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static ModService? CreateService()
