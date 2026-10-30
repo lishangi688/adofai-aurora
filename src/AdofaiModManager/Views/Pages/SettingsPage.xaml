@@ -162,10 +162,21 @@
                           Content="自定义站点"
                           Unchecked="SourceEnabled_Changed"
                           Visibility="Collapsed" />
+                <CheckBox x:Name="SourceGitHubCheck"
+                          Margin="0,0,18,8"
+                          Checked="CheckGitHub_Changed"
+                          Content="GitHub（仅检查更新）"
+                          ToolTip="GitHub 不是内容来源，不会出现在「在线 Mod」的来源列表里；关掉后检查更新会跳过各 mod 的 GitHub 仓库。"
+                          Unchecked="CheckGitHub_Changed" />
             </WrapPanel>
             <TextBlock x:Name="SourceToggleHint"
                        FontSize="12"
                        Opacity="0.75"
+                       TextWrapping="Wrap" />
+            <TextBlock Margin="0,4,0,0"
+                       FontSize="12"
+                       Opacity="0.55"
+                       Text="GitHub 只用于检查各 mod 的更新，不会作为「在线 Mod」的来源出现。"
                        TextWrapping="Wrap" />
 
             <!-- 默认站点（ADOFAITools） -->
@@ -239,15 +250,10 @@
                       Checked="CheckOnStartup_Changed"
                       Content="打开软件时自动检查更新"
                       Unchecked="CheckOnStartup_Changed" />
-            <CheckBox x:Name="CheckGitHubBox"
-                      Margin="0,10,0,0"
-                      Checked="CheckGitHub_Changed"
-                      Content="同时查询 GitHub（作者通常首发在这里）"
-                      Unchecked="CheckGitHub_Changed" />
             <TextBlock Margin="0,8,0,0"
                        FontSize="12"
                        Opacity="0.6"
-                       Text="两个来源都会查，取版本更高的那个（版本相同时优先用站点结果）。GitHub 在国内可能连不上，连不上会自动忽略、只用站点的结果；关掉这项可以让检查更快更安静。"
+                       Text="检查时会查询「启用的来源」里勾选的站点，以及 GitHub（可在上面关掉）。版本取更高的那个；GitHub 在国内可能连不上，连不上会自动忽略。"
                        TextWrapping="Wrap" />
 
             <!-- 其它 -->

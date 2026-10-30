@@ -63,7 +63,7 @@ public partial class SettingsPage : Page
         AppVersionText.Text = $"Aurora 版本 v{AppUpdateService.CurrentVersion}";
 
         CheckOnStartupBox.IsChecked = settings.CheckUpdatesOnStartup;
-        CheckGitHubBox.IsChecked = settings.CheckGitHubUpdates;
+        SourceGitHubCheck.IsChecked = settings.CheckGitHubUpdates;
         DiagnosticLogBox.IsChecked = settings.DiagnosticLogging;
         SyncSourceChecks();
 
@@ -374,8 +374,13 @@ public partial class SettingsPage : Page
             return;
         }
 
-        AppServices.Settings.Settings.CheckGitHubUpdates = CheckGitHubBox.IsChecked == true;
+        AppServices.Settings.Settings.CheckGitHubUpdates = SourceGitHubCheck.IsChecked == true;
         AppServices.Settings.Save();
+
+        if (SourceGitHubCheck.IsChecked != true)
+        {
+            SourceToggleHint.Text = "已关闭 GitHub：检查更新时不再查询各 mod 的 GitHub 仓库。";
+        }
     }
 
     // ---------------- 诊断与反馈 ----------------
