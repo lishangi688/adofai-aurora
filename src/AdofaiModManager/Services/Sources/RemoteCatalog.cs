@@ -15,6 +15,40 @@ public sealed record SourceChoice(string Title, IRemoteSource? Source)
 /// <summary>可用的 mod 来源清单。</summary>
 public static class RemoteSources
 {
+    /// <summary>默认资源站（走原有代码通道，Source 为 null）在设置里用的标识。</summary>
+    public const string SiteId = "site";
+
+    // 单例：以前每次读 Choices / All 都 new 一套源，而每个源又会各自 new 一个 HttpClient，
+    // 反复切来源、检查更新时就是一堆新的连接池和 TLS 握手。
+    private static readonly ModriftSource Modrift = new();
+    private static readonly TufSource Tuf = new();
+    private static readonly ModlistSource Modlist = new();
+
+    /// <summary>默认站点（ADOFAI Tools 那条通道）是不是启用着。</summary>
+    public static bool IsSiteEnabled() => IsEnabled(SiteId);
+
+    /// <summary>某个来源是否启用（id 见各来源的 Id，默认站点用 "site"）。</summary>
+    public static bool IsEnabled(string id) =>
+        !AppServices.Settings.Settings.DisabledSources
+            .Any(s => string.Equals(s, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>开关某个来源。调用方负责保证"至少留一个"。</summary>
+    public static void SetEnabled(string id, bool enabled)
+    {
+        var list = AppServices.Settings.Settings.DisabledSources;
+
+        if (enabled)
+        {
+            list.RemoveAll(s => string.Equals(s, id, StringComparison.OrdinalIgnoreCase));
+        }
+        else if (!list.Any(s => string.Equals(s, id, StringComparison.OrdinalIgnoreCase)))
+        {
+            list.Add(id);
+        }
+
+        AppServices.Settings.Save();
+    }
+
     /// <summary>
     /// 界面下拉框用：第一项是默认站点（走原有代码路径，Source 为 null），
     /// 之后是「自定义站点」（配置了才出现）和内置的第三方来源。
@@ -24,54 +58,70 @@ public static class RemoteSources
     {
         get
         {
-            var list = new List<SourceChoice>
-            {
-                new(AppServices.SiteDisplayName, null),
-                new("modrift", new ModriftSource()),
-            };
+            var list = new List<SourceChoice>();
 
-            if (AdofaiToolsSource.CreateCustomSite() is { } custom)
+            if (IsSiteEnabled())
+            {
+                list.Add(new SourceChoice(AppServices.SiteDisplayName, null));
+            }
+
+            if (IsEnabled(Modrift.Id))
+            {
+                list.Add(new SourceChoice(Modrift.DisplayName, Modrift));
+            }
+
+            if (AdofaiToolsSource.CreateCustomSite() is { } custom && IsEnabled(custom.Id))
             {
                 list.Add(new SourceChoice(custom.DisplayName, custom));
             }
 
-            list.Add(new SourceChoice("TUF", new TufSource()));
-            list.Add(new SourceChoice("modlist", new ModlistSource()));
+            if (IsEnabled(Tuf.Id))
+            {
+                list.Add(new SourceChoice(Tuf.DisplayName, Tuf));
+            }
+
+            if (IsEnabled(Modlist.Id))
+            {
+                list.Add(new SourceChoice(Modlist.DisplayName, Modlist));
+            }
 
             return list;
         }
     }
 
     /// <summary>
-    /// 程序化使用的来源清单（更新检查等用；不含"默认站点原有通道"）。
+    /// 程序化使用的来源清单（更新检查等用；不含"默认站点原有通道"，只含启用的）。
     /// 自定义站点没配置就不会出现在这里。
     /// </summary>
-    public static IReadOnlyList<IRemoteSource> All
-    {
-        get
-        {
-            var list = new List<IRemoteSource>
-            {
-                new ModriftSource(),
-            };
+    public static IReadOnlyList<IRemoteSource> All =>
+        BuildAll()
+            .Where(s => IsEnabled(s.Id))
+            .ToList();
 
-            if (AdofaiToolsSource.CreateCustomSite() is { } custom)
-            {
-                list.Add(custom);
-            }
-
-            list.Add(new TufSource());
-            list.Add(new ModlistSource());
-
-            return list;
-        }
-    }
-
-    /// <summary>按 id 找源（更新时要用它解析下载地址）。</summary>
+    /// <summary>按 id 找源（更新已安装的 mod 时要用它解析下载地址）。</summary>
+    /// <remarks>
+    /// 这里**不过滤**"是否启用"：用户只是不想在列表里看到某个源，
+    /// 之前从它装的 mod 仍然要能按原来源更新。
+    /// </remarks>
     public static IRemoteSource? ById(string? id) =>
         string.IsNullOrWhiteSpace(id)
             ? null
-            : All.FirstOrDefault(s => s.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            : BuildAll().FirstOrDefault(s => s.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+
+    private static List<IRemoteSource> BuildAll()
+    {
+        var list = new List<IRemoteSource> { Modrift };
+
+        if (AdofaiToolsSource.CreateCustomSite() is { } custom)
+        {
+            list.Add(custom);
+        }
+
+        list.Add(Tuf);
+        list.Add(Modlist);
+
+        return list;
+    }
 }
 
 /// <summary>

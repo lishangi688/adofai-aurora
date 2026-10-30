@@ -128,6 +128,46 @@
                 </TextBlock>
             </Grid>
 
+            <!-- 启用的来源 -->
+            <TextBlock Margin="0,20,0,6" FontSize="14" FontWeight="SemiBold" Text="启用的来源" />
+            <TextBlock Margin="0,0,0,8"
+                       FontSize="12"
+                       Opacity="0.6"
+                       Text="关掉的来源不会出现在「在线 Mod」的来源列表里，检查更新时也会跳过——站点慢的时候关掉它能让软件更快、更安静。至少要保留一个。"
+                       TextWrapping="Wrap" />
+            <WrapPanel>
+                <CheckBox x:Name="SourceSiteCheck"
+                          Margin="0,0,18,8"
+                          Checked="SourceEnabled_Changed"
+                          Content="ADOFAITools"
+                          Unchecked="SourceEnabled_Changed" />
+                <CheckBox x:Name="SourceModriftCheck"
+                          Margin="0,0,18,8"
+                          Checked="SourceEnabled_Changed"
+                          Content="modrift"
+                          Unchecked="SourceEnabled_Changed" />
+                <CheckBox x:Name="SourceTufCheck"
+                          Margin="0,0,18,8"
+                          Checked="SourceEnabled_Changed"
+                          Content="TUF"
+                          Unchecked="SourceEnabled_Changed" />
+                <CheckBox x:Name="SourceModlistCheck"
+                          Margin="0,0,18,8"
+                          Checked="SourceEnabled_Changed"
+                          Content="modlist"
+                          Unchecked="SourceEnabled_Changed" />
+                <CheckBox x:Name="SourceCustomCheck"
+                          Margin="0,0,18,8"
+                          Checked="SourceEnabled_Changed"
+                          Content="自定义站点"
+                          Unchecked="SourceEnabled_Changed"
+                          Visibility="Collapsed" />
+            </WrapPanel>
+            <TextBlock x:Name="SourceToggleHint"
+                       FontSize="12"
+                       Opacity="0.75"
+                       TextWrapping="Wrap" />
+
             <!-- 默认站点（ADOFAITools） -->
             <TextBlock x:Name="SiteSectionTitle"
                        Margin="0,32,0,8"

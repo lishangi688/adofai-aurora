@@ -1,5 +1,5 @@
 {
-  "version": "0.33.2",
+  "version": "0.33.3",
   "name": "UnityModManager",
   "upstream": "https://github.com/newman55/unity-mod-manager",
   "note": "内置稳定内核（随软件分发）"

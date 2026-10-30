@@ -96,12 +96,45 @@ public partial class OnlineModsPage : Page
         {
             PageScrollFix.DisableOuterPageScrolling(this);
             HookListScroll();
+            RefreshSourceChoices();
 
             if (_mods.Count == 0)
             {
                 _ = SearchAsync(1);
             }
         };
+    }
+
+    /// <summary>
+    /// 设置里改了「启用的来源」之后，重新填一次来源下拉框。
+    /// 列表没变就直接返回，避免每次回到页面都触发一次重新加载。
+    /// </summary>
+    private void RefreshSourceChoices()
+    {
+        var current = SourceCombo.SelectedItem as SourceChoice;
+        var choices = RemoteSources.Choices;
+
+        var same = SourceCombo.Items.Count == choices.Count;
+        for (var i = 0; same && i < choices.Count; i++)
+        {
+            same = string.Equals(
+                choices[i].ToString(),
+                SourceCombo.Items[i]?.ToString(),
+                StringComparison.Ordinal);
+        }
+
+        if (same)
+        {
+            return;
+        }
+
+        SourceCombo.ItemsSource = choices;
+
+        var index = current is null
+            ? 0
+            : choices.ToList().FindIndex(c => string.Equals(c.Title, current.Title, StringComparison.Ordinal));
+
+        SourceCombo.SelectedIndex = index >= 0 ? index : 0;
     }
 
     /// <summary>

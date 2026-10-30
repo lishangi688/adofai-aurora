@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 using AdofaiModManager.Models;
+using AdofaiModManager.Services.Sources;
 using Microsoft.Win32;
 
 namespace AdofaiModManager.Services;
@@ -109,7 +110,7 @@ public static class AppUpdateService
             tasks.Add(CheckGitHubAsync(ct));
         }
 
-        if (AppServices.CreateApiClient() is { } client)
+        if (AppServices.CreateApiClient() is { } client && RemoteSources.IsSiteEnabled())
         {
             tasks.Add(CheckSiteAsync(client, ct));
         }

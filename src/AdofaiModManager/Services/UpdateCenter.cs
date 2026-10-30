@@ -149,6 +149,14 @@ public sealed class UpdateCenter
     /// </summary>
     public async Task EnsureSiteMapAsync(bool force = false, CancellationToken ct = default)
     {
+        // 用户在设置里关掉了默认站点：既不拉它的 mod 列表，也不参与更新比对
+        if (!RemoteSources.IsSiteEnabled())
+        {
+            _siteMap.Clear();
+            _siteMapTime = DateTime.MinValue;
+            return;
+        }
+
         if (!force &&
             _siteMap.Count > 0 &&
             DateTime.UtcNow - _siteMapTime < SiteMapTtl)

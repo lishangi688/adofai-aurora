@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using AdofaiModManager.Services;
+using AdofaiModManager.Services.Sources;
 using Microsoft.Win32;
 
 namespace AdofaiModManager.Views.Pages;
@@ -64,6 +65,7 @@ public partial class SettingsPage : Page
         CheckOnStartupBox.IsChecked = settings.CheckUpdatesOnStartup;
         CheckGitHubBox.IsChecked = settings.CheckGitHubUpdates;
         DiagnosticLogBox.IsChecked = settings.DiagnosticLogging;
+        SyncSourceChecks();
 
         UpdateGameStatus();
         UpdateGameVersionStatus();
@@ -377,6 +379,79 @@ public partial class SettingsPage : Page
     }
 
     // ---------------- 诊断与反馈 ----------------
+
+    private bool _syncingSourceChecks;
+
+    /// <summary>把「启用的来源」勾选状态刷成设置里的值。</summary>
+    private void SyncSourceChecks()
+    {
+        _syncingSourceChecks = true;
+        try
+        {
+            SourceSiteCheck.Content = AppServices.SiteDisplayName;
+            SourceSiteCheck.IsChecked = RemoteSources.IsSiteEnabled();
+            SourceModriftCheck.IsChecked = RemoteSources.IsEnabled("modrift");
+            SourceTufCheck.IsChecked = RemoteSources.IsEnabled("tuf");
+            SourceModlistCheck.IsChecked = RemoteSources.IsEnabled("modlist");
+
+            var custom = AdofaiToolsSource.CreateCustomSite();
+            SourceCustomCheck.Visibility = custom is null ? Visibility.Collapsed : Visibility.Visible;
+            SourceCustomCheck.IsChecked = custom is not null && RemoteSources.IsEnabled(custom.Id);
+        }
+        finally
+        {
+            _syncingSourceChecks = false;
+        }
+    }
+
+    private void SourceEnabled_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSourceChecks || !_ready)
+        {
+            return;
+        }
+
+        var custom = AdofaiToolsSource.CreateCustomSite();
+
+        var map = new (CheckBox Box, string Id)[]
+        {
+            (SourceSiteCheck, RemoteSources.SiteId),
+            (SourceModriftCheck, "modrift"),
+            (SourceTufCheck, "tuf"),
+            (SourceModlistCheck, "modlist"),
+            (SourceCustomCheck, custom?.Id ?? "custom"),
+        };
+
+        var visible = map.Where(m => m.Box.Visibility == Visibility.Visible).ToList();
+
+        // 至少保留一个：如果这次操作把最后一个也关了，就把刚点的那个勾回来
+        if (visible.All(m => m.Box.IsChecked != true))
+        {
+            if (sender is CheckBox clicked)
+            {
+                _syncingSourceChecks = true;
+                clicked.IsChecked = true;
+                _syncingSourceChecks = false;
+            }
+
+            SourceToggleHint.Text = "至少要保留一个来源。";
+            return;
+        }
+
+        var disabled = AppServices.Settings.Settings.DisabledSources;
+        disabled.Clear();
+        foreach (var (box, id) in visible)
+        {
+            if (box.IsChecked != true)
+            {
+                disabled.Add(id);
+            }
+        }
+
+        AppServices.Settings.Save();
+
+        SourceToggleHint.Text = "已保存，更改会在「在线 Mod」页面下次打开或切换来源时生效。";
+    }
 
     private void DiagnosticLog_Changed(object sender, RoutedEventArgs e)
     {
