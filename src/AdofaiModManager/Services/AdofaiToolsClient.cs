@@ -26,6 +26,9 @@ public sealed class AdofaiToolsClient
     private readonly string _apiRoot;
     private readonly string? _apiKey;
 
+    /// <summary>当前用的是不是内置的公共 key（用来给出更准确的限流/失效提示）。</summary>
+    private readonly bool _usingBuiltInKey;
+
     public AdofaiToolsClient(string baseUrl, string? apiKey)
     {
         var trimmed = (baseUrl ?? string.Empty).Trim().TrimEnd('/');
@@ -36,6 +39,9 @@ public sealed class AdofaiToolsClient
 
         _apiRoot = trimmed.EndsWith("/api", StringComparison.OrdinalIgnoreCase) ? trimmed : trimmed + "/api";
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
+        _usingBuiltInKey = _apiKey is not null
+                           && AppSecrets.AdofaiToolsApiKey.Length > 0
+                           && string.Equals(_apiKey, AppSecrets.AdofaiToolsApiKey, StringComparison.Ordinal);
     }
 
     public bool HasKey => _apiKey is not null;
@@ -197,7 +203,7 @@ public sealed class AdofaiToolsClient
         return request;
     }
 
-    private static async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
+    private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
         HttpResponseMessage response;
 
@@ -221,7 +227,9 @@ public sealed class AdofaiToolsClient
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                throw new AdofaiToolsException("API key 无效或未填写（401）。请到「设置」里填写正确的 key。");
+                throw new AdofaiToolsException(_usingBuiltInKey
+                    ? "内置的公共 API key 已失效（401）——站长可能已经撤销了它。请到「设置」填写自己的 key。"
+                    : "API key 无效或未填写（401）。请到「设置」里填写正确的 key。");
             }
 
             if (!response.IsSuccessStatusCode)
@@ -233,9 +241,12 @@ public sealed class AdofaiToolsClient
 
                 throw new AdofaiToolsException(code switch
                 {
+                    429 => "站点请求过于频繁（429）。稍后再试，或在「设置」里填写自己的 key。",
+                    403 => _usingBuiltInKey
+                        ? "站点拒绝了内置的公共 key（403）——可能已被撤销或触发限制。请在「设置」里填写自己的 key。"
+                        : "站点拒绝了请求（403），请检查 API key 是否正确。",
                     >= 500 => $"站点服务器暂时出问题了（{code}），请稍后再试。",
                     404 => "没有找到这个资源（404），可能已被作者删除。",
-                    403 => "站点拒绝了请求（403），请检查 API key 是否正确。",
                     _ => $"站点返回了错误（{code}），请稍后再试。",
                 });
             }

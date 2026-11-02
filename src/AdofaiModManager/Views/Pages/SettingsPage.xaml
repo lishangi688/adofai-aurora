@@ -192,9 +192,10 @@
             <TextBlock Margin="0,10,0,4"
                        FontSize="12"
                        Opacity="0.6"
-                       Text="API key（该站点要求鉴权时填写；在站点的「个人中心」创建）" />
+                       Text="API key（留空 = 使用 Aurora 内置的公共 key；也可以填自己的）" />
             <ui:PasswordBox x:Name="ApiKeyBox"
                             PasswordChar="●"
+                            PlaceholderText="留空 = 使用内置公共 key"
                             Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                             PasswordChanged="ApiKeyBox_PasswordChanged"
                             RevealButtonEnabled="True" />
@@ -219,7 +220,7 @@
             <TextBlock Margin="0,8,0,0"
                        FontSize="12"
                        Opacity="0.6"
-                       Text="这里默认是 ADOFAITools；填任何实现相同接口的站点地址也能用（接入规范见 docs/RESOURCE-SITE-API.md）。API key 只保存在本机，公开版本不内置任何 key。"
+                       Text="这里默认是 ADOFAITools；填任何实现相同接口的站点地址也能用（接入规范见 docs/RESOURCE-SITE-API.md）。默认站点已内置一个公共 key，开箱即用；它随软件公开、所有用户共用，遇到限流或失效时在上面填自己的 key 即可。API key 只保存在本机。"
                        TextWrapping="Wrap" />
 
             <!-- 自定义站点 -->

@@ -109,6 +109,6 @@ POST /api/mod-files/{fileId}/download-intent
 ---
 
 ## 5. 遗留待确认
-- [ ] 向站长确认：**允许第三方客户端调用这些接口 / 公开发布软件**（当前 key 是个人 key）。
-- [ ] 确认 key 的**频率限制 / 配额**（避免公开软件把个人 key 打爆 → 这正是我们要「让用户填自己的 key」的原因）。
+- [x] 站长已同意第三方客户端调用并公开分发，并提供 Aurora 专用公共 key（2026-10-31）。
+- [ ] 确认该 key 的**频率限制 / 配额**（所有 Aurora 用户共用；超限时的返回码和恢复时间）。
 - [ ] 站点域名后续是否会把裸域 `adofaitools.top` 恢复（软件里建议把 base URL 做成可配置，默认 `https://www.adofaitools.top`）。

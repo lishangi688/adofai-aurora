@@ -71,7 +71,8 @@ public static class AppServices
 
     /// <summary>
     /// 按当前设置创建资源站客户端。
-    /// API key 允许为空 —— 有些站点可能不要求鉴权。
+    /// 优先级：用户自己填的 key &gt; 内置公共 key（仅默认站点）。
+    /// 自定义站点不会拿到内置 key，避免把 ATL 的 key 发给别的站点。
     /// </summary>
     public static AdofaiToolsClient? CreateApiClient()
     {
@@ -81,7 +82,25 @@ public static class AppServices
             return null;
         }
 
-        return new AdofaiToolsClient(settings.ApiBaseUrl, settings.ApiKey);
+        var key = settings.ApiKey;
+        if (string.IsNullOrWhiteSpace(key) && IsAdofaiToolsHost(settings.ApiBaseUrl))
+        {
+            key = AppSecrets.AdofaiToolsApiKey;
+        }
+
+        return new AdofaiToolsClient(settings.ApiBaseUrl, key);
+    }
+
+    /// <summary>判断地址是不是 ADOFAI Tools（含 www），只有它才使用内置 key。</summary>
+    private static bool IsAdofaiToolsHost(string url)
+    {
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.Host.Equals("adofaitools.top", StringComparison.OrdinalIgnoreCase)
+               || uri.Host.EndsWith(".adofaitools.top", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void Initialize()

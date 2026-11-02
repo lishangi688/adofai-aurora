@@ -11,7 +11,7 @@ public sealed class AppSettings
     /// <summary>资源站接口地址</summary>
     public string ApiBaseUrl { get; set; } = "https://www.adofaitools.top";
 
-    /// <summary>用户填写的 API key（仅本地保存）</summary>
+    /// <summary>用户自己的 API key（优先于内置公共 key；留空则默认站点使用内置 key）</summary>
     public string? ApiKey { get; set; }
 
     /// <summary>默认站点的显示名（留空则按地址自动判断：adofaitools → ADOFAITools，其它用域名）</summary>

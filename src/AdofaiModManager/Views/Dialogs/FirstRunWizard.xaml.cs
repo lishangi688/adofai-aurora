@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using AdofaiModManager.Services;
+using AdofaiModManager.Services.Sources;
 using Wpf.Ui.Controls;
 
 namespace AdofaiModManager.Views.Dialogs;
@@ -14,6 +16,13 @@ namespace AdofaiModManager.Views.Dialogs;
 public partial class FirstRunWizard : FluentWindow
 {
     private int _step = 1;
+
+    /// <summary>第一次使用：资源站默认只勾 ADOFAITools（用户动过就不再套默认值）。</summary>
+    private readonly bool _applyDefaultSources;
+
+    private bool _sourcesTouched;
+
+    private bool _syncingSources;
 
     public FirstRunWizard()
     {
@@ -33,8 +42,7 @@ public partial class FirstRunWizard : FluentWindow
         }
 
         GamePathBox.Text = settings.GamePath ?? string.Empty;
-        ApiBaseBox.Text = settings.ApiBaseUrl;
-        ApiKeyBox.Password = settings.ApiKey ?? string.Empty;
+        _applyDefaultSources = !settings.HasCompletedSetup;
 
         SetStep(1);
     }
@@ -77,10 +85,14 @@ public partial class FirstRunWizard : FluentWindow
         {
             UpdateGameStatus();
         }
+        else if (step == 2)
+        {
+            // 加载器：进这一步时检测状态，并查一下资源站最新版本
+            RefreshLoaderStatus();
+        }
         else if (step == 3)
         {
-            // 第 3 步是加载器：进这一步时检测状态，并查一下资源站最新版本
-            RefreshLoaderStatus();
+            RefreshSourceStep();
         }
     }
 
@@ -208,31 +220,21 @@ public partial class FirstRunWizard : FluentWindow
         var bundled = loader is null ? null : new KernelService(loader).GetBundled();
         var bundledText = bundled?.Version ?? "缺失";
 
-        // 第 2 步没填 API key 时，站点这条路走不通（也下载不了），直接推荐内置
-        var hasKey = !string.IsNullOrWhiteSpace(AppServices.Settings.Settings.ApiKey);
-
-        if (!hasKey)
+        var client = AppServices.CreateApiClient();
+        if (client is null || !client.HasKey)
         {
-            SiteKernelText.Text = $"（未填写 API key，不查询站点）　Aurora 内置内核：{bundledText}";
+            SiteKernelText.Text = $"（没有可用的 API key，不查询站点）　Aurora 内置内核：{bundledText}";
 
             if (bundled is null)
             {
-                Recommend(KernelChoice.None, "内置内核缺失，请重新安装 Aurora，或先从 ADOFAITools 配置好 API key 再回来。");
+                Recommend(KernelChoice.None, "内置内核缺失，请重新安装 Aurora，或先在「设置」里填写 ADOFAITools 的 key。");
             }
             else
             {
                 Recommend(KernelChoice.Bundled,
-                    $"没有填写 ADOFAITools 的 API key，推荐直接用内置内核（{bundledText}）——不用登录，也不受网络影响。");
+                    $"没有可用的 ADOFAITools key，推荐直接用内置内核（{bundledText}）——不用联网。");
             }
 
-            return;
-        }
-
-        var client = AppServices.CreateApiClient();
-        if (client is null)
-        {
-            SiteKernelText.Text = $"（ADOFAITools 地址为空）　Aurora 内置内核：{bundledText}";
-            Recommend(KernelChoice.Bundled, $"推荐使用内置内核（{bundledText}）。");
             return;
         }
 
@@ -393,39 +395,133 @@ public partial class FirstRunWizard : FluentWindow
         }
     }
 
-    // ---------------- 第 3 步：资源站（可选） ----------------
+    // ---------------- 第 3 步：资源站 ----------------
 
-    private void ApiBaseBox_TextChanged(object sender, TextChangedEventArgs e)
+    private void RefreshSourceStep()
     {
-        AppServices.Settings.Settings.ApiBaseUrl = ApiBaseBox.Text.Trim();
+        var custom = AdofaiToolsSource.CreateCustomSite();
+
+        _syncingSources = true;
+        try
+        {
+            WizardSiteCheck.Content = AppServices.SiteDisplayName;
+            WizardCustomCheck.Visibility = custom is null ? Visibility.Collapsed : Visibility.Visible;
+
+            if (_applyDefaultSources && !_sourcesTouched)
+            {
+                WizardSiteCheck.IsChecked = true;
+                WizardModriftCheck.IsChecked = false;
+                WizardTufCheck.IsChecked = false;
+                WizardModlistCheck.IsChecked = false;
+                WizardCustomCheck.IsChecked = false;
+                WizardSourceHint.Text = "默认只启用 ADOFAITools；需要其它来源时直接勾上即可。";
+            }
+            else
+            {
+                WizardSiteCheck.IsChecked = RemoteSources.IsSiteEnabled();
+                WizardModriftCheck.IsChecked = RemoteSources.IsEnabled("modrift");
+                WizardTufCheck.IsChecked = RemoteSources.IsEnabled("tuf");
+                WizardModlistCheck.IsChecked = RemoteSources.IsEnabled("modlist");
+                WizardCustomCheck.IsChecked = custom is not null && RemoteSources.IsEnabled(custom.Id);
+                WizardSourceHint.Text = string.Empty;
+            }
+        }
+        finally
+        {
+            _syncingSources = false;
+        }
+    }
+
+    private (CheckBox Box, string Id)[] SourceCheckboxes()
+    {
+        var custom = AdofaiToolsSource.CreateCustomSite();
+        return
+        [
+            (WizardSiteCheck, RemoteSources.SiteId),
+            (WizardModriftCheck, "modrift"),
+            (WizardTufCheck, "tuf"),
+            (WizardModlistCheck, "modlist"),
+            (WizardCustomCheck, custom?.Id ?? "custom"),
+        ];
+    }
+
+    private void WizardSource_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSources)
+        {
+            return;
+        }
+
+        var visible = SourceCheckboxes().Where(m => m.Box.Visibility == Visibility.Visible).ToList();
+
+        if (visible.All(m => m.Box.IsChecked != true))
+        {
+            if (sender is CheckBox clicked)
+            {
+                _syncingSources = true;
+                clicked.IsChecked = true;
+                _syncingSources = false;
+            }
+
+            WizardSourceHint.Text = "至少要保留一个来源。";
+            return;
+        }
+
+        SaveSourceSelection(visible);
+        _sourcesTouched = true;
+        WizardSourceHint.Text = "已保存。以后可以在「设置 → 启用的来源」里修改。";
+    }
+
+    private static void SaveSourceSelection(IEnumerable<(CheckBox Box, string Id)> items)
+    {
+        var disabled = AppServices.Settings.Settings.DisabledSources;
+        disabled.Clear();
+        foreach (var (box, id) in items)
+        {
+            if (box.IsChecked != true)
+            {
+                disabled.Add(id);
+            }
+        }
+
         AppServices.Settings.Save();
     }
 
-    private void ApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+    /// <summary>第一次使用且没动过第 3 步时：默认只留 ADOFAITools。</summary>
+    private static void ApplyDefaultSources()
     {
-        AppServices.Settings.Settings.ApiKey = ApiKeyBox.Password.Trim();
+        var disabled = AppServices.Settings.Settings.DisabledSources;
+        disabled.Clear();
+        disabled.Add("modrift");
+        disabled.Add("tuf");
+        disabled.Add("modlist");
+        if (AdofaiToolsSource.CreateCustomSite() is { } custom)
+        {
+            disabled.Add(custom.Id);
+        }
+
         AppServices.Settings.Save();
     }
 
-    private async void TestApi_Click(object sender, RoutedEventArgs e)
+    private async void TestWizardApi_Click(object sender, RoutedEventArgs e)
     {
         var client = AppServices.CreateApiClient();
         if (client is null)
         {
-            ApiStatusText.Text = "✗ 请先填写 ADOFAITools 地址。";
+            WizardApiStatusText.Text = "✗ 尚未配置 ADOFAITools 地址。";
             return;
         }
 
-        ApiStatusText.Text = "正在测试连接…";
+        WizardApiStatusText.Text = "正在测试连接…";
 
         try
         {
             var page = await client.GetModsAsync(1, 1);
-            ApiStatusText.Text = $"✓ 连接成功，ADOFAITools 共有 {page.Total} 个资源。";
+            WizardApiStatusText.Text = $"✓ 连接成功，ADOFAITools 共有 {page.Total} 个资源。";
         }
         catch (AdofaiToolsException ex)
         {
-            ApiStatusText.Text = "✗ " + ex.Message;
+            WizardApiStatusText.Text = "✗ " + ex.Message;
         }
     }
 
@@ -463,6 +559,12 @@ public partial class FirstRunWizard : FluentWindow
 
     private void Finish_Click(object sender, RoutedEventArgs e)
     {
+        // 第一次使用、且用户没在第 3 步改过：默认只启用 ADOFAITools
+        if (_applyDefaultSources && !_sourcesTouched)
+        {
+            ApplyDefaultSources();
+        }
+
         AppServices.Settings.Settings.HasCompletedSetup = true;
         AppServices.Settings.Save();
         DialogResult = true;

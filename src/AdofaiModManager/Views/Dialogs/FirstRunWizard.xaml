@@ -30,8 +30,8 @@
         <!-- 步骤指示 -->
         <StackPanel Grid.Row="1" Margin="32,4,32,0" Orientation="Horizontal">
             <TextBlock x:Name="Step1Label" FontWeight="SemiBold" Text="① 游戏目录" />
-            <TextBlock x:Name="Step2Label" Margin="24,0,0,0" Opacity="0.4" Text="② ADOFAITools（可选）" />
-            <TextBlock x:Name="Step3Label" Margin="24,0,0,0" Opacity="0.4" Text="③ UMM 加载器" />
+            <TextBlock x:Name="Step2Label" Margin="24,0,0,0" Opacity="0.4" Text="② UMM 加载器" />
+            <TextBlock x:Name="Step3Label" Margin="24,0,0,0" Opacity="0.4" Text="③ 资源站" />
         </StackPanel>
 
         <!-- 步骤内容 -->
@@ -62,7 +62,7 @@
             </StackPanel>
 
             <!-- 第 3 步：加载器 -->
-            <StackPanel x:Name="Step3Panel" Visibility="Collapsed">
+            <StackPanel x:Name="Step2Panel" Visibility="Collapsed">
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="UMM 加载器" />
                 <TextBlock Margin="0,8,0,0"
                            Opacity="0.75"
@@ -120,30 +120,77 @@
                            Text="若这里显示「已就绪」，说明加载器装好了，可直接下一步。游戏大更新后可能需要点一下修复。" />
             </StackPanel>
 
-            <!-- 第 2 步：资源站（可选） -->
-            <StackPanel x:Name="Step2Panel" Visibility="Collapsed">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="ADOFAITools（可选）" />
+            <!-- 第 3 步：资源站 -->
+            <StackPanel x:Name="Step3Panel" Visibility="Collapsed">
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="资源站" />
                 <TextBlock Margin="0,8,0,0"
                            Opacity="0.75"
                            TextWrapping="Wrap"
-                           Text="填上 ADOFAITools 的 API key 就能在线浏览、下载 mod；下一步装加载器时会顺便对比版本——站点有更新才推荐从站点取，否则用内置的更快。跳过也没关系：Aurora 仍可管理本地已有的 mod，并可用内置内核离线安装，之后可在「设置」里随时填写。" />
+                           Text="选择要启用的 Mod 来源。默认只勾选 ADOFAITools —— 它最稳定、访问也快；其它来源以后可以在「设置 → 启用的来源」里随时打开。" />
 
-                <TextBlock Margin="0,16,0,4" FontSize="12" Opacity="0.6" Text="ADOFAITools 地址" />
-                <ui:TextBox x:Name="ApiBaseBox" TextChanged="ApiBaseBox_TextChanged" />
-                <TextBlock Margin="0,10,0,4" FontSize="12" Opacity="0.6" Text="API key（可留空；在 ADOFAITools 的「个人中心」创建）" />
-                <ui:PasswordBox x:Name="ApiKeyBox"
-                                PasswordChar="●"
-                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                PasswordChanged="ApiKeyBox_PasswordChanged"
-                                RevealButtonEnabled="True" />
+                <Border Margin="0,16,0,0"
+                        Padding="16"
+                        Background="{DynamicResource AmmCardBackgroundBrush}"
+                        BorderBrush="{DynamicResource AmmCardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <CheckBox x:Name="WizardSiteCheck"
+                                  Checked="WizardSource_Changed"
+                                  Content="ADOFAITools（推荐）"
+                                  Unchecked="WizardSource_Changed" />
+                        <TextBlock Margin="26,4,0,0"
+                                   FontSize="12"
+                                   Opacity="0.65"
+                                   TextWrapping="Wrap"
+                                   Text="已内置公共 key，开箱即用，不需要登录。之后如果在「设置」里填了自己的 key，会优先使用自己的。" />
+                        <WrapPanel Margin="0,12,0,0">
+                            <CheckBox x:Name="WizardModriftCheck"
+                                      Margin="0,0,18,8"
+                                      Checked="WizardSource_Changed"
+                                      Content="modrift"
+                                      Unchecked="WizardSource_Changed" />
+                            <CheckBox x:Name="WizardTufCheck"
+                                      Margin="0,0,18,8"
+                                      Checked="WizardSource_Changed"
+                                      Content="TUF"
+                                      Unchecked="WizardSource_Changed" />
+                            <CheckBox x:Name="WizardModlistCheck"
+                                      Margin="0,0,18,8"
+                                      Checked="WizardSource_Changed"
+                                      Content="modlist"
+                                      Unchecked="WizardSource_Changed" />
+                            <CheckBox x:Name="WizardCustomCheck"
+                                      Margin="0,0,18,8"
+                                      Checked="WizardSource_Changed"
+                                      Content="自定义站点"
+                                      Unchecked="WizardSource_Changed"
+                                      Visibility="Collapsed" />
+                        </WrapPanel>
+                        <TextBlock x:Name="WizardSourceHint"
+                                   Margin="0,4,0,0"
+                                   FontSize="12"
+                                   Opacity="0.75"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
 
-                <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
-                    <ui:Button Click="TestApi_Click"
-                               Content="测试连接"
+                <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                    <ui:Button Click="TestWizardApi_Click"
+                               Content="测试 ADOFAITools 连接"
                                Icon="{ui:SymbolIcon Symbol=ArrowSync24}" />
                     <ui:Button Margin="8,0,0,0" Click="OpenSite_Click" Content="打开 ADOFAITools" />
                 </StackPanel>
-                <TextBlock x:Name="ApiStatusText" Margin="0,14,0,0" Opacity="0.85" TextWrapping="Wrap" />
+                <TextBlock x:Name="WizardApiStatusText"
+                           Margin="0,10,0,0"
+                           FontSize="12"
+                           Opacity="0.8"
+                           TextWrapping="Wrap" />
+                <TextBlock Margin="0,10,0,0"
+                           FontSize="12"
+                           Opacity="0.55"
+                           TextWrapping="Wrap"
+                           Text="GitHub 只用于检查 Mod 更新，不会作为内容来源；可以在「设置 → 启用的来源」里单独关闭。" />
             </StackPanel>
         </Grid>
 

@@ -73,7 +73,7 @@ Aurora 将多个来源的 Mod 集中到同一个界面，方便浏览、搜索�
 
 | 来源 | 说明 |
 | --- | --- |
-| [ADOFAI Tools](https://adofaitools.top/) | 默认来源，需要 API key，可在站点“个人中心”创建 |
+| [ADOFAI Tools](https://adofaitools.top/) | 默认来源，已内置公共 API key，开箱即用（也可以填自己的 key） |
 | [modrift](https://modrift.org) | 无需 API key，提供公开 API |
 | [TUF（The Universal Forums）](https://tuforums.com/mods) | 无需 API key，提供 Mod 目录和下载服务 |
 | [modlist](https://modlist.org) | 无需 API key，提供公开 API |
@@ -83,7 +83,7 @@ Aurora 不绑定单一资源站。来自各站点的内容会注明出处，并�
 
 从某个来源安装 Mod 后，更新时会优先使用该来源。“已安装”页面的更新检查也会查询其他来源，查找较新的版本。手动检查会刷新相关数据，启动时的自动检查则使用缓存。
 
-Aurora 不内置 API key。使用需要鉴权的站点时，请自行在对应站点创建并填写。Mod 下载通过各来源的下载接口完成，并使用本地缓存减少重复请求。
+Aurora 内置了一个由 ADOFAI Tools 站长提供的公共 API key，默认站点开箱即用，所有用户共用，可能触发限流；如果遇到这种情况，可以在“设置”里填写自己的 key（自己的 key 优先）。这个 key 会随开源客户端公开，站长可随时在后台撤销或更换。Mod 下载通过各来源的下载接口完成，并使用本地缓存减少重复请求。
 
 自定义站点的接口要求见[资源站接口规范](docs/RESOURCE-SITE-API.md)。
 
