@@ -3,7 +3,7 @@ namespace AdofaiModManager.Services;
 /// <summary>
 /// 随客户端一起分发的公开凭据。
 ///
-/// 这里的 ADOFAI Tools key 是站长提供给 Aurora 的专用 key，会出现在公开仓库和发布包里，
+/// 这里的 ADOFAI Tools key 是为 Aurora 单独创建的专用 key（后台可随时撤销），会出现在公开仓库和发布包里，
 /// 因此**不要把它当成秘密**：它只用于默认站点的只读接口和下载，泄漏后可以在站点后台撤销。
 /// 用户可以在「设置」里填写自己的 key 覆盖它。
 /// </summary>

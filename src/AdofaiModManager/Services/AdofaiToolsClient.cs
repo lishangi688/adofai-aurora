@@ -228,7 +228,7 @@ public sealed class AdofaiToolsClient
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 throw new AdofaiToolsException(_usingBuiltInKey
-                    ? "内置的公共 API key 已失效（401）——站长可能已经撤销了它。请到「设置」填写自己的 key。"
+                    ? "内置的公共 API key 已失效（401）——它可能已经被撤销。请到「设置」填写自己的 key。"
                     : "API key 无效或未填写（401）。请到「设置」里填写正确的 key。");
             }
 
