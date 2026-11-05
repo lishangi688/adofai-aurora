@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -44,6 +45,7 @@ public partial class FirstRunWizard : FluentWindow
         GamePathBox.Text = settings.GamePath ?? string.Empty;
         _applyDefaultSources = !settings.HasCompletedSetup;
 
+        Closing += Wizard_Closing;
         SetStep(1);
     }
 
@@ -568,5 +570,29 @@ public partial class FirstRunWizard : FluentWindow
         AppServices.Settings.Settings.HasCompletedSetup = true;
         AppServices.Settings.Save();
         DialogResult = true;
+    }
+
+    /// <summary>向导里也可能正在装加载器；关闭前确认一次，避免装到一半退出。</summary>
+    private void Wizard_Closing(object? sender, CancelEventArgs e)
+    {
+        if (!CriticalWork.IsActive)
+        {
+            return;
+        }
+
+        var answer = System.Windows.MessageBox.Show(
+            this,
+            $"Aurora 正在{CriticalWork.Description}。\n\n"
+            + "现在关闭可能会中断写入，游戏目录里可能留下不完整的文件。\n\n"
+            + "确定要退出吗？",
+            "操作尚未完成",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning,
+            System.Windows.MessageBoxResult.No);
+
+        if (answer != System.Windows.MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+        }
     }
 }

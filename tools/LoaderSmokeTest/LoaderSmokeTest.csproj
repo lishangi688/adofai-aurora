@@ -14,6 +14,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\LoaderService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\KernelService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\CriticalWork.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\InstallResult.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\SteamGameLocator.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Models\KernelManifest.cs" />

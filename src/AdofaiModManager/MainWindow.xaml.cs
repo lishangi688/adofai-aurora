@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using AdofaiModManager.Services;
@@ -20,6 +21,7 @@ public partial class MainWindow : FluentWindow
 
         AppServices.Updates.Changed += OnUpdatesChanged;
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -214,5 +216,35 @@ public partial class MainWindow : FluentWindow
             AppServices.Settings.Settings.LastPage = pageType.Name;
             AppServices.Settings.Save();
         }
+    }
+
+    /// <summary>
+    /// 安装 / 更新 / 卸载还没写完时，用户误关窗口会留下半个 Mod 或半个加载器。
+    /// 这里先确认一次；默认选"否"，让操作继续跑完。
+    /// </summary>
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (!CriticalWork.IsActive)
+        {
+            return;
+        }
+
+        var answer = System.Windows.MessageBox.Show(
+            $"Aurora 正在{CriticalWork.Description}。\n\n"
+            + "现在关闭可能会中断写入，游戏目录里可能留下不完整的文件。\n\n"
+            + "确定要退出吗？",
+            "操作尚未完成",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning,
+            System.Windows.MessageBoxResult.No);
+
+        if (answer != System.Windows.MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            AppPaths.AppendDebugLog($"[close] 已阻止退出：{CriticalWork.Description}");
+            return;
+        }
+
+        AppPaths.AppendDebugLog($"[close] 关键操作进行中，用户仍选择退出：{CriticalWork.Description}");
     }
 }

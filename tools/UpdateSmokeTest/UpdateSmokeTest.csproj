@@ -21,6 +21,7 @@
     <Compile Include="..\..\src\AdofaiModManager\Services\SteamGameLocator.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\LoaderService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\KernelService.cs" />
+    <Compile Include="..\..\src\AdofaiModManager\Services\CriticalWork.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\GitHubUpdateService.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\UpdateSourceStore.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\VersionScheme.cs" />

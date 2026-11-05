@@ -119,6 +119,8 @@ public sealed class LoaderService
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
 
+        using var criticalWork = CriticalWork.Begin("安装或修复 UMM 加载器");
+
         try
         {
             Directory.CreateDirectory(LoaderPath);
@@ -190,6 +192,8 @@ public sealed class LoaderService
         {
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
+
+        using var criticalWork = CriticalWork.Begin("卸载 UMM 加载器");
 
         try
         {

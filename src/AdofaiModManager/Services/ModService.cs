@@ -132,6 +132,8 @@ public sealed class ModService
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
 
+        using var criticalWork = CriticalWork.Begin("安装或更新 Mod");
+
         string? staging = null;
 
         try
@@ -608,6 +610,8 @@ public sealed class ModService
         CancellationToken ct = default,
         string? cacheName = null)
     {
+        using var criticalWork = CriticalWork.Begin("下载并安装 Mod");
+
         string? temp = null;
         try
         {
@@ -738,6 +742,8 @@ public sealed class ModService
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
 
+        using var criticalWork = CriticalWork.Begin("卸载 Mod");
+
         try
         {
             if (Directory.Exists(mod.FolderPath))
@@ -767,6 +773,8 @@ public sealed class ModService
         {
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
+
+        using var criticalWork = CriticalWork.Begin("切换 Mod 启用状态");
 
         try
         {

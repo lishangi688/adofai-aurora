@@ -123,6 +123,8 @@ public sealed class KernelService
     /// <summary>部署指定内核。</summary>
     public InstallResult Deploy(KernelInfo kernel)
     {
+        using var criticalWork = CriticalWork.Begin("部署 UMM 内核");
+
         SnapshotDeployed();
         var result = _loader.DeployFromDirectory(kernel.Directory);
 
