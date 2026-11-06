@@ -365,6 +365,23 @@ public partial class InstalledModsPage : Page
             return;
         }
 
+        // 更新时会先把旧目录改名成 .aurora-old-*，这时原路径暂时不存在；
+        // 而 Windows Explorer 遇到不存在的路径不会报错，会直接打开「文档」文件夹，
+        // 看起来就像 Aurora 打开错了地方。这里先自己判断，并给出明确提示。
+        if (_busy)
+        {
+            Report(false, "正在更新或检查，请完成后再打开文件夹。");
+            return;
+        }
+
+        if (!Directory.Exists(mod.FolderPath))
+        {
+            AppPaths.AppendDebugLog($"[open] mod={mod.Id} path={mod.FolderPath} exists=false");
+            Report(false, "这个 Mod 的文件夹不存在，可能已被移动或删除。已刷新列表，请重试。");
+            Reload();
+            return;
+        }
+
         try
         {
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{mod.FolderPath}\"")
@@ -374,6 +391,7 @@ public partial class InstalledModsPage : Page
         }
         catch (Exception ex)
         {
+            AppPaths.AppendDebugLog($"[open] mod={mod.Id} path={mod.FolderPath} 失败：{ex.Message}");
             Report(false, $"打开文件夹失败：{ex.Message}");
         }
     }

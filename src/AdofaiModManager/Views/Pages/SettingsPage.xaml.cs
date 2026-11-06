@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using AdofaiModManager.Services;
@@ -520,6 +522,33 @@ public partial class SettingsPage : Page
 
             var utf8 = new System.Text.UTF8Encoding(false);
 
+            // 把游戏侧日志读进 zip；游戏运行中日志可能被占用，所以用 ReadWrite 共享方式打开
+            void AddGameLog(ZipArchive archive, string sourcePath, string entryName)
+            {
+                if (!File.Exists(sourcePath))
+                {
+                    return;
+                }
+
+                try
+                {
+                    using var stream = new FileStream(
+                        sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream, utf8, detectEncodingFromByteOrderMarks: true);
+                    var text = reader.ReadToEnd();
+
+                    var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+                    using var writer = new StreamWriter(entry.Open(), utf8);
+                    writer.Write(AppPaths.Redact(text));
+                }
+                catch (Exception ex)
+                {
+                    var entry = archive.CreateEntry(entryName + ".error.txt");
+                    using var writer = new StreamWriter(entry.Open(), utf8);
+                    writer.Write($"读取失败：{ex.Message}{Environment.NewLine}源文件：{sourcePath}");
+                }
+            }
+
             using (var zip = System.IO.Compression.ZipFile.Open(
                        path, System.IO.Compression.ZipArchiveMode.Create))
             {
@@ -534,6 +563,15 @@ public partial class SettingsPage : Page
                 // ② 环境说明
                 var settings = AppServices.Settings.Settings;
 
+                var gamePath = settings.GamePath ?? string.Empty;
+                var ummLogPath = !string.IsNullOrWhiteSpace(gamePath) && Directory.Exists(gamePath)
+                    ? Path.Combine(new LoaderService(gamePath).LoaderPath, "Log.txt")
+                    : null;
+                var unityLogDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "AppData", "LocalLow", "7th Beat Games", "A Dance of Fire and Ice");
+                var playerLogPath = Path.Combine(unityLogDir, "Player.log");
+
                 var sys = zip.CreateEntry("system.txt");
                 using (var writer = new StreamWriter(sys.Open(), utf8))
                 {
@@ -544,6 +582,8 @@ public partial class SettingsPage : Page
                         $"游戏目录：{settings.GamePath ?? "(未设置)"}　存在="
                         + Directory.Exists(settings.GamePath ?? string.Empty));
                     writer.WriteLine($"当前来源：{AppServices.SiteDisplayName}");
+                    writer.WriteLine($"UMM 日志：{ummLogPath ?? "(未找到)"}　存在={ummLogPath is not null && File.Exists(ummLogPath)}");
+                    writer.WriteLine($"游戏日志：{playerLogPath}　存在={File.Exists(playerLogPath)}");
                 }
 
                 // ③ 设置文件（密钥字段打码）
@@ -554,10 +594,19 @@ public partial class SettingsPage : Page
                     using var writer = new StreamWriter(cfg.Open(), utf8);
                     writer.Write(AppPaths.Redact(File.ReadAllText(configPath)));
                 }
+
+                // ④ 游戏侧日志：UMM 内核日志 + Unity 的 Player.log
+                if (ummLogPath is not null)
+                {
+                    AddGameLog(zip, ummLogPath, "game/UMM-Log.txt");
+                }
+
+                AddGameLog(zip, playerLogPath, "game/Player.log");
+                AddGameLog(zip, Path.Combine(unityLogDir, "Player-prev.log"), "game/Player-prev.log");
             }
 
             DiagnosticsStatusText.Text =
-                $"已导出：{path}\n日志里可能含有 24 小时有效的下载直链，建议私聊发送，不要贴到公开的地方。";
+                $"已导出：{path}\n诊断包包含 Aurora 日志、UMM 日志和游戏日志（如果存在）；可能含有游戏路径、Mod 列表和 24 小时有效的下载直链，建议私聊发送，不要贴到公开的地方。";
 
             try
             {

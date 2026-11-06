@@ -314,7 +314,7 @@
                        FontSize="12"
                        Opacity="0.6"
                        TextWrapping="Wrap"
-                       Text="日志保存在本机用户目录，单文件最多 2 MB、超出自动轮转，写之前会脱敏 API key 和下载签名。关掉后只保留崩溃日志。" />
+                       Text="日志保存在本机用户目录，单文件最多 2 MB、超出自动轮转，写之前会脱敏 API key 和下载签名。关掉后只保留崩溃日志。导出诊断包时会附带 UMM 日志和游戏日志（如果存在）。" />
             <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
                 <ui:Button Click="OpenLogFolder_Click"
                            Content="打开日志文件夹"
