@@ -91,10 +91,10 @@ public static class AppServices
         return new AdofaiToolsClient(settings.ApiBaseUrl, key);
     }
 
-    /// <summary>判断地址是不是 ADOFAI Tools（含 www），只有它才使用内置 key。</summary>
-    private static bool IsAdofaiToolsHost(string url)
+    /// <summary>判断地址是不是 ADOFAI Tools（含 www），只有它才使用内置 key、才参与 Aurora 自身的更新。</summary>
+    public static bool IsAdofaiToolsHost(string? url)
     {
-        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
         {
             return false;
         }

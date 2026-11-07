@@ -29,6 +29,7 @@ public enum AppDistribution
 /// <param name="PortableUrl">GitHub：绿色版 zip</param>
 /// <param name="InstallerUrl">GitHub：安装包 exe</param>
 /// <param name="IsCombinedPackage">是否为"合并包"（里面同时含 portable/ 与安装包）</param>
+/// <param name="IsLocalTestPackage">开发用的本地测试包（只有它的地址允许是本地文件路径）</param>
 public sealed record AppUpdateInfo(
     string Version,
     string SourceLabel,
@@ -37,7 +38,8 @@ public sealed record AppUpdateInfo(
     string? FileName = null,
     string? PortableUrl = null,
     string? InstallerUrl = null,
-    bool IsCombinedPackage = false)
+    bool IsCombinedPackage = false,
+    bool IsLocalTestPackage = false)
 {
     /// <summary>按当前形态（安装版 / 绿色版）挑一个合适的下载地址。</summary>
     public string? UrlFor(AppDistribution distribution)
@@ -166,7 +168,8 @@ public static class AppUpdateService
             ReleasesPageUrl,
             DownloadUrl: packagePath,
             FileName: Path.GetFileName(packagePath),
-            IsCombinedPackage: packagePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+            IsCombinedPackage: packagePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase),
+            IsLocalTestPackage: true);
     }
 
     private static string? ReadVersionFromPackage(string packagePath)
@@ -292,25 +295,39 @@ public static class AppUpdateService
         }
     }
 
-    /// <summary>资源站：在「工具库」里找 Aurora 自己，并尽量取到一个可直链下载的文件。</summary>
+    /// <summary>
+    /// Aurora 在 ADOFAI Tools 工具库里的 slug（固定值，不按名字搜索）。
+    ///
+    /// 以前是"名字里包含 Aurora 就认成自己"，工具库里任何同名或名字相近的条目都能让所有用户
+    /// 收到"发现新版本"，而「立即更新」会直接运行 / 解压它。站点上的条目如果重建、slug 变了，
+    /// 这里认不出来只会让资源站通道失效（GitHub 通道照常），不会装错东西。
+    /// </summary>
+    public const string SiteToolSlug = "adofai-mod-manager";
+
+    /// <summary>资源站：取工具库里 Aurora 自己的条目，并尽量取到一个可直链下载的文件。</summary>
     private static async Task<AppUpdateInfo?> CheckSiteAsync(AdofaiToolsClient client, CancellationToken ct)
     {
+        // 只认 ADOFAI Tools：用户把「默认站点」换成别的地址时，那个站点不能给 Aurora 推送可执行的更新
+        if (!AppServices.IsAdofaiToolsHost(AppServices.Settings.Settings.ApiBaseUrl))
+        {
+            AppPaths.AppendDebugLog("[appupdate] 默认站点不是 ADOFAI Tools，跳过资源站通道");
+            return null;
+        }
+
         try
         {
-            var list = await client.GetToolsAsync(null, 1, 100, ct);
-            var tool = list.Items.FirstOrDefault(IsSelf);
+            var detail = await client.GetToolDetailAsync(SiteToolSlug, ct);
 
-            if (tool is null)
+            if (!string.Equals(detail.Slug, SiteToolSlug, StringComparison.OrdinalIgnoreCase))
             {
-                AppPaths.AppendDebugLog("[appupdate] 资源站工具库里没认出 Aurora（名字 / slug 都不匹配）");
+                AppPaths.AppendDebugLog($"[appupdate] 资源站返回的条目 slug={detail.Slug}，与预期不符，跳过");
                 return null;
             }
 
-            var detail = await client.GetToolDetailAsync(tool.Slug, ct);
-            var version = PickNewestVersion(detail) ?? tool.LatestVersion?.VersionId;
+            var version = PickNewestVersion(detail);
 
             AppPaths.AppendDebugLog(
-                $"[appupdate] 资源站认出自己：{tool.DisplayName}（slug={tool.Slug}）版本={version ?? "-"}");
+                $"[appupdate] 资源站条目：{detail.DisplayName}（slug={detail.Slug}）版本={version ?? "-"}");
 
             if (string.IsNullOrWhiteSpace(version))
             {
@@ -358,24 +375,6 @@ public static class AppUpdateService
         {
             return null;
         }
-    }
-
-    /// <summary>
-    /// 在工具库里认出 Aurora 自己。
-    ///
-    /// 只认明确属于我们的名字 / slug，**故意不认单独的 “AMM” 或以 AMM 开头的名字**：
-    /// ADOFAI 生态里已经有一个同样叫 AMM 的管理器，把它认成自己会让 Aurora
-    /// 提示“有新版本”，甚至去装别人的安装包。
-    /// </summary>
-    private static bool IsSelf(ToolListItem tool)
-    {
-        var name = tool.DisplayName ?? string.Empty;
-        var slug = tool.Slug ?? string.Empty;
-
-        return name.Contains("Aurora", StringComparison.OrdinalIgnoreCase)
-               || name.Contains("ADOFAI Mod Manager", StringComparison.OrdinalIgnoreCase)
-               || slug.Contains("adofai-aurora", StringComparison.OrdinalIgnoreCase)
-               || slug.Contains("adofai-mod-manager", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

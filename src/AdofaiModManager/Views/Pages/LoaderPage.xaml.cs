@@ -375,7 +375,7 @@ public partial class LoaderPage : Page
         try
         {
             Report(true, "正在导入内核…");
-            var (imported, message) = await kernel.ImportAsync(dialog.FileName);
+            var (imported, message) = await kernel.ImportAsync(dialog.FileName, allowLocalFile: true);
             if (imported is null)
             {
                 Report(false, message);

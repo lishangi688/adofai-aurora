@@ -207,8 +207,15 @@ public sealed class KernelService
     // 备注：自建「内核更新通道（manifest）」已移除 —— 内核更新改为
     // ① 从资源站「工具库」获取最新 UMM；② 用户导入本地 zip。
 
-    /// <summary>下载（并校验、解压）一个内核版本到本地。</summary>
-    public async Task<(KernelInfo? Kernel, string Message)> DownloadAsync(KernelRelease release, CancellationToken ct = default)
+    /// <summary>
+    /// 下载（并校验、解压）一个内核版本到本地。
+    /// allowLocalFile：只有用户自己选的本地 zip 才为 true；资源站等远端给的地址一律只接受 http(s)，
+    /// 否则一个 \\host\share\x.zip 这样的值会让 File.Exists 去连 SMB 共享。
+    /// </summary>
+    public async Task<(KernelInfo? Kernel, string Message)> DownloadAsync(
+        KernelRelease release,
+        CancellationToken ct = default,
+        bool allowLocalFile = false)
     {
         if (string.IsNullOrWhiteSpace(release.Version))
         {
@@ -228,16 +235,23 @@ public sealed class KernelService
 
             tempZip = Path.Combine(Path.GetTempPath(), $"amm-kernel-{Guid.NewGuid():N}.zip");
 
-            if (File.Exists(release.DownloadUrl))
-            {
-                File.Copy(release.DownloadUrl, tempZip, true);
-            }
-            else
+            var isHttp = Uri.TryCreate(release.DownloadUrl, UriKind.Absolute, out var uri)
+                         && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+
+            if (isHttp)
             {
                 using var response = await Http.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                 response.EnsureSuccessStatusCode();
                 await using var file = File.Create(tempZip);
                 await response.Content.CopyToAsync(file, ct);
+            }
+            else if (allowLocalFile && File.Exists(release.DownloadUrl))
+            {
+                File.Copy(release.DownloadUrl, tempZip, true);
+            }
+            else
+            {
+                return (null, "内核地址无效（不是网络地址，也不是本地文件）。");
             }
 
             if (!string.IsNullOrWhiteSpace(release.Sha256))
@@ -262,6 +276,13 @@ public sealed class KernelService
             {
                 Directory.Delete(targetDir, true);
                 return (null, "该内核包里没有找到 UnityModManager.dll，可能不是有效的内核包。");
+            }
+
+            // 名字叫 UnityModManager.dll 不代表就是：至少要是一个程序集名为 UnityModManager 的 .NET 程序集
+            if (!string.Equals(ReadKernelAssemblyName(targetDir), "UnityModManager", StringComparison.Ordinal))
+            {
+                Directory.Delete(targetDir, true);
+                return (null, "该内核包里的 UnityModManager.dll 不是有效的 UnityModManager 程序集，已放弃。");
             }
 
             await File.WriteAllTextAsync(
@@ -305,11 +326,13 @@ public sealed class KernelService
 
     /// <summary>
     /// 从本地 zip 或 URL 导入内核包（例如从 Nexus Mods 下载的 UnityModManager）。
+    /// allowLocalFile 只在 source 是用户自己选的本地文件时传 true。
     /// </summary>
     public async Task<(KernelInfo? Kernel, string Message)> ImportAsync(
         string source,
         string? version = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool allowLocalFile = false)
     {
         if (string.IsNullOrWhiteSpace(source))
         {
@@ -323,7 +346,7 @@ public sealed class KernelService
             Notes = "本地导入 / 手动指定",
         };
 
-        var (kernel, message) = await DownloadAsync(release, ct);
+        var (kernel, message) = await DownloadAsync(release, ct, allowLocalFile);
         if (kernel is null)
         {
             return (null, message);
@@ -364,6 +387,18 @@ public sealed class KernelService
         }
 
         return (kernel, $"内核 {kernel.Version} 已就绪。");
+    }
+
+    private static string? ReadKernelAssemblyName(string directory)
+    {
+        try
+        {
+            return System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(directory, "UnityModManager.dll")).Name;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? ReadKernelDllVersion(string directory)

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -66,23 +67,46 @@ public static class AppSelfUpdater
 
             var packagePath = Path.Combine(packageDir, SanitizeFileName(fileName));
 
-            if (File.Exists(url))
+            // 只有开发用的本地测试包允许走"本地文件"：远端（资源站 / GitHub）给出的地址一律当 URL，
+            // 否则一个 \\host\share\x.zip 这样的值会让 File.Exists 去连 SMB 共享
+            var verifyNote = string.Empty;
+
+            if (info.IsLocalTestPackage)
             {
-                // 本地文件（开发测试用）
                 progress?.Report($"正在读取本地更新包 v{info.Version} …");
                 File.Copy(url, packagePath, true);
             }
             else
             {
+                if (!IsHttpUrl(url))
+                {
+                    return new SelfUpdateResult(false, "更新地址不是有效的网络地址，已中止。请到发布页手动下载。");
+                }
+
                 progress?.Report($"正在下载 v{info.Version} …　0%");
                 await DownloadAsync(url, packagePath, progress, info.Version, ct);
+
+                // 用 GitHub Release 里的 SHA256SUMS.txt 核对：资源站下载的包也能核对
+                progress?.Report("正在校验下载的文件…");
+                switch (await VerifyChecksumAsync(packagePath, info.Version, ct))
+                {
+                    case ChecksumResult.Mismatch:
+                        TryDeleteDirectory(workRoot);
+                        return new SelfUpdateResult(
+                            false,
+                            $"校验失败：下载的文件与 GitHub 发布页公布的 SHA256 不一致，已中止更新（文件可能被篡改或下载不完整）。请到发布页手动下载。");
+
+                    case ChecksumResult.Unavailable:
+                        verifyNote = "（未能从 GitHub 获取校验文件，本次未做哈希校验）";
+                        break;
+                }
             }
 
             // ---- 安装包：打开安装程序，交给用户走向导 ----
             if (packagePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
                 progress?.Report("下载完成，正在打开安装程序…");
-                return LaunchInstaller(packagePath);
+                return WithNote(LaunchInstaller(packagePath), verifyNote);
             }
 
             // ---- 压缩包：解压出绿色版文件 ----
@@ -109,7 +133,7 @@ public static class AppSelfUpdater
                 TryDeleteDirectory(packageDir);
 
                 progress?.Report("正在打开安装程序…");
-                return LaunchInstaller(setupInside);
+                return WithNote(LaunchInstaller(setupInside), verifyNote);
             }
 
             if (!extracted)
@@ -127,7 +151,7 @@ public static class AppSelfUpdater
 
             // ---- 绿色版：写更新脚本，等 Aurora 退出后替换并重启 ----
             progress?.Report("准备替换文件…");
-            return LaunchPortableUpdater(payloadDir, AppContext.BaseDirectory, workRoot);
+            return WithNote(LaunchPortableUpdater(payloadDir, AppContext.BaseDirectory, workRoot), verifyNote);
         }
         catch (OperationCanceledException)
         {
@@ -473,7 +497,7 @@ public static class AppSelfUpdater
     /// </summary>
     private static string ResolveFileName(AppUpdateInfo info, string url, bool isInstaller)
     {
-        if (File.Exists(url))
+        if (info.IsLocalTestPackage)
         {
             var local = Path.GetFileName(url);
             if (!string.IsNullOrWhiteSpace(local))
@@ -502,6 +526,83 @@ public static class AppSelfUpdater
 
         return isInstaller ? "setup.exe" : "update.zip";
     }
+
+    private enum ChecksumResult
+    {
+        /// <summary>哈希出现在 SHA256SUMS.txt 里</summary>
+        Verified,
+
+        /// <summary>拿到了校验文件，但哈希对不上</summary>
+        Mismatch,
+
+        /// <summary>拿不到校验文件（GitHub 连不上 / 旧版本没有发布校验文件）</summary>
+        Unavailable,
+    }
+
+    /// <summary>
+    /// 到 GitHub 本版本的 Release 里取 SHA256SUMS.txt，核对下载文件的哈希。
+    ///
+    /// 校验文件由 installer\build-installer.ps1 生成，包含绿色版 zip、安装包和资源站合并包三个文件，
+    /// 所以不管从哪个通道下载，只要能连上 GitHub 就能核对。
+    /// 连不上 GitHub 时（国内常见）退化为不校验，并在结果里注明 —— 资源站通道已经固定了条目 slug，
+    /// 校验主要是防"资源站上的文件被替换"。
+    /// </summary>
+    private static async Task<ChecksumResult> VerifyChecksumAsync(string filePath, string version, CancellationToken ct)
+    {
+        string sums;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var url = $"https://github.com/{AppUpdateService.GitHubOwner}/{AppUpdateService.GitHubRepo}"
+                      + $"/releases/download/v{Uri.EscapeDataString(version)}/SHA256SUMS.txt";
+
+            using var response = await Http.GetAsync(url, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                AppPaths.AppendDebugLog($"[selfupdate] 取校验文件失败：{(int)response.StatusCode}");
+                return ChecksumResult.Unavailable;
+            }
+
+            sums = await response.Content.ReadAsStringAsync(timeout.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            AppPaths.AppendDebugLog($"[selfupdate] 取校验文件失败：{ex.Message}");
+            return ChecksumResult.Unavailable;
+        }
+
+        // 每行：<64 位十六进制>  <文件名>（sha256sum 格式，文件名前可能带 *）
+        var known = sums
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split(' ', 2)[0])
+            .Where(hash => hash.Length == 64 && hash.All(Uri.IsHexDigit))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (known.Count == 0)
+        {
+            AppPaths.AppendDebugLog("[selfupdate] 校验文件里没有可用的哈希");
+            return ChecksumResult.Unavailable;
+        }
+
+        string actual;
+        using (var stream = File.OpenRead(filePath))
+        {
+            actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct));
+        }
+
+        var ok = known.Contains(actual);
+        AppPaths.AppendDebugLog($"[selfupdate] 校验 {Path.GetFileName(filePath)} sha256={actual} 结果={(ok ? "通过" : "不一致")}");
+        return ok ? ChecksumResult.Verified : ChecksumResult.Mismatch;
+    }
+
+    private static bool IsHttpUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+
+    private static SelfUpdateResult WithNote(SelfUpdateResult result, string note) =>
+        result.Success && note.Length > 0 ? result with { Message = result.Message + note } : result;
 
     private static string SanitizeFileName(string name)
     {

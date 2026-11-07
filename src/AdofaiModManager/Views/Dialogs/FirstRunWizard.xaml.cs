@@ -379,7 +379,7 @@ public partial class FirstRunWizard : FluentWindow
         try
         {
             var kernel = new KernelService(loader);
-            var (imported, message) = await kernel.ImportAsync(dialog.FileName);
+            var (imported, message) = await kernel.ImportAsync(dialog.FileName, allowLocalFile: true);
 
             if (imported is null)
             {
