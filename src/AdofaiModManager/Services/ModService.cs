@@ -49,6 +49,34 @@ public sealed class ModService
     /// </summary>
     private const string TempFolderPrefix = ".aurora-";
 
+    /// <summary>
+    /// 全局互斥：同一时间只允许一个"改 Mods 目录 / Params.xml"的操作（安装、更新、卸载、启停）。
+    ///
+    /// 「已安装」「在线 Mod」「收藏」三个页面各有自己的忙碌标记，互相看不见；以前没出事
+    /// 只是因为 InstallFromZip 碰巧总在 UI 线程上同步执行。这里不排队，直接拒绝第二个请求，
+    /// 让用户看到明确的提示。静态的：每个页面都会 new 自己的 ModService。
+    /// </summary>
+    private static readonly SemaphoreSlim OperationGate = new(1, 1);
+
+    private const string BusyMessage = "另一个 Mod 安装 / 更新 / 卸载操作正在进行，请等它完成后再试。";
+
+    private static InstallResult RunExclusive(Func<InstallResult> operation)
+    {
+        if (!OperationGate.Wait(0))
+        {
+            return new InstallResult(false, BusyMessage);
+        }
+
+        try
+        {
+            return operation();
+        }
+        finally
+        {
+            OperationGate.Release();
+        }
+    }
+
     public IReadOnlyList<InstalledMod> Scan()
     {
         var result = new List<InstalledMod>();
@@ -128,7 +156,10 @@ public sealed class ModService
     /// expectedId：从「已安装」页更新某个 mod 时传入它的 Id。更新来源是按名字匹配的，
     /// 匹配错了会下到另一个 mod；包里的 Id 对不上就拒绝，不能装成别的东西。
     /// </summary>
-    public InstallResult InstallFromZip(string zipPath, string? expectedId = null)
+    public InstallResult InstallFromZip(string zipPath, string? expectedId = null) =>
+        RunExclusive(() => InstallFromZipCore(zipPath, expectedId));
+
+    private InstallResult InstallFromZipCore(string zipPath, string? expectedId)
     {
         if (!File.Exists(zipPath))
         {
@@ -618,6 +649,29 @@ public sealed class ModService
         string? cacheName = null,
         string? expectedId = null)
     {
+        // 下载阶段也要占住：否则两个安装可以同时下载，先下完的那个装到一半时另一个也开始装
+        if (!OperationGate.Wait(0))
+        {
+            return new InstallResult(false, BusyMessage);
+        }
+
+        try
+        {
+            return await InstallFromUrlCoreAsync(url, progress, ct, cacheName, expectedId);
+        }
+        finally
+        {
+            OperationGate.Release();
+        }
+    }
+
+    private async Task<InstallResult> InstallFromUrlCoreAsync(
+        string url,
+        IProgress<int>? progress,
+        CancellationToken ct,
+        string? cacheName,
+        string? expectedId)
+    {
         using var criticalWork = CriticalWork.Begin("下载并安装 Mod");
 
         string? temp = null;
@@ -653,7 +707,7 @@ public sealed class ModService
                 }
             }
 
-            var result = InstallFromZip(temp, expectedId);
+            var result = InstallFromZipCore(temp, expectedId);
 
             if (result.Success && !string.IsNullOrWhiteSpace(cacheName))
             {
@@ -743,7 +797,9 @@ public sealed class ModService
         return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
 
-    public InstallResult Uninstall(InstalledMod mod)
+    public InstallResult Uninstall(InstalledMod mod) => RunExclusive(() => UninstallCore(mod));
+
+    private InstallResult UninstallCore(InstalledMod mod)
     {
         if (SteamGameLocator.IsGameRunning())
         {
@@ -774,7 +830,9 @@ public sealed class ModService
         }
     }
 
-    public InstallResult SetEnabled(InstalledMod mod, bool enabled)
+    public InstallResult SetEnabled(InstalledMod mod, bool enabled) => RunExclusive(() => SetEnabledCore(mod, enabled));
+
+    private InstallResult SetEnabledCore(InstalledMod mod, bool enabled)
     {
         // 游戏运行时 UMM 退出前会把自己内存里的启用状态写回 Params.xml，这里改了也会被覆盖
         if (SteamGameLocator.IsGameRunning())
