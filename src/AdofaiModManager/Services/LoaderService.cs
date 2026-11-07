@@ -119,10 +119,41 @@ public sealed class LoaderService
             return new InstallResult(false, SteamGameLocator.GameRunningMessage);
         }
 
+        // 所有前置检查都要在第一次写入之前做完：以前先复制了 UnityModManager.dll 才发现缺注入组件，
+        // 游戏里会留下"新的 UMM + 旧的注入器"
+        if (!File.Exists(Path.Combine(kernelDirectory, "UnityModManager.dll")))
+        {
+            return new InstallResult(false, "内核缺少 UnityModManager.dll，不是有效的内核包。");
+        }
+
+        var is64 = Is64BitExecutable(ExecutablePath);
+        var winhttpSource = Path.Combine(kernelDirectory, is64 ? "winhttp_x64.dll" : "winhttp_x86.dll");
+        if (!File.Exists(winhttpSource))
+        {
+            return new InstallResult(false, $"内核缺少注入组件：{Path.GetFileName(winhttpSource)}");
+        }
+
         using var criticalWork = CriticalWork.Begin("安装或修复 UMM 加载器");
 
         try
         {
+            // 其它加载器（BepInEx 等）同样用 winhttp.dll + doorstop_config.ini：
+            // 不是 Aurora 装的就先备份，卸载 UMM 加载器时再恢复。必须在任何写入之前判断。
+            var backedUp = new List<string>();
+            var configIsOurs = File.Exists(DoorstopConfigPath) && DoorstopConfigLooksLikeOurs();
+
+            // doorstop_config 指向 UnityModManager 时，旁边的 winhttp 也属于 UMM 这一套
+            //（旧版本 Aurora 部署资源站内核时没留哈希记录，不能因此把它当成别人的）
+            if (File.Exists(WinhttpPath) && !configIsOurs && !WinhttpLooksLikeOurs())
+            {
+                backedUp.Add(BackupForeignFile(WinhttpPath));
+            }
+
+            if (File.Exists(DoorstopConfigPath) && !configIsOurs)
+            {
+                backedUp.Add(BackupForeignFile(DoorstopConfigPath));
+            }
+
             Directory.CreateDirectory(LoaderPath);
 
             foreach (var name in LoaderFiles)
@@ -153,36 +184,52 @@ public sealed class LoaderService
                 }
             }
 
-            // winhttp 注入代理：若已有同名文件且并非本软件所装，则先备份
-            var is64 = Is64BitExecutable(ExecutablePath);
-            var winhttpSource = Path.Combine(kernelDirectory, is64 ? "winhttp_x64.dll" : "winhttp_x86.dll");
-            if (!File.Exists(winhttpSource))
-            {
-                return new InstallResult(false, $"内核缺少注入组件：{Path.GetFileName(winhttpSource)}");
-            }
-
-            if (File.Exists(WinhttpPath) && !File.Exists(DoorstopConfigPath))
-            {
-                var backup = WinhttpPath + ".amm-backup";
-                if (!File.Exists(backup))
-                {
-                    File.Copy(WinhttpPath, backup, true);
-                }
-            }
-
             File.Copy(winhttpSource, WinhttpPath, true);
+
+            // 记下这次部署的 winhttp 哈希：资源站 / 本地导入的内核和内置的不是同一个文件，
+            // 卸载时靠它认出"这是 Aurora 装的"
+            File.WriteAllText(DeployMarkerPath, Sha256Of(WinhttpPath), new UTF8Encoding(false));
 
             // Doorstop 配置
             var target = $"{DataFolderName}\\Managed\\UnityModManager\\UnityModManager.dll";
             var ini = $"[General]\r\nenabled = true\r\ntarget_assembly = {target}\r\n";
             File.WriteAllText(DoorstopConfigPath, ini, new UTF8Encoding(false));
 
-            return new InstallResult(true, "UMM 加载器部署完成。现在可以启动游戏了。");
+            var message = "UMM 加载器部署完成。现在可以启动游戏了。";
+            if (backedUp.Count > 0)
+            {
+                message += $"\n检测到其它加载器（例如 BepInEx）的文件，已备份为：{string.Join("、", backedUp)}。"
+                           + "卸载 UMM 加载器时会自动恢复。";
+            }
+
+            return new InstallResult(true, message);
         }
         catch (Exception ex)
         {
             return new InstallResult(false, $"部署失败：{ex.Message}");
         }
+    }
+
+    /// <summary>部署时记录 winhttp 哈希的文件（放在 UnityModManager 目录里，卸载时一起删掉）。</summary>
+    private string DeployMarkerPath => Path.Combine(LoaderPath, "aurora-winhttp.sha256");
+
+    /// <summary>把不是 Aurora 装的文件备份成 *.amm-backup（已有备份时不覆盖，另起一个带时间的名字）。</summary>
+    private static string BackupForeignFile(string path)
+    {
+        var backup = path + ".amm-backup";
+        if (File.Exists(backup))
+        {
+            backup = $"{path}.amm-backup-{DateTime.Now:yyyyMMddHHmmss}";
+        }
+
+        File.Copy(path, backup, false);
+        return Path.GetFileName(backup);
+    }
+
+    private static string Sha256Of(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
     }
 
     /// <summary>卸载加载器。</summary>
@@ -203,9 +250,13 @@ public sealed class LoaderService
             // 只删"确实是 Aurora 写的"文件：
             // 有用户用 BepInEx 等其它加载器，它们也用 winhttp.dll / doorstop_config.ini，
             // 一律删掉会把别人的加载器搞坏。
+            // 归属要在删任何东西之前一起判断（winhttp 的判断要参考 doorstop_config，也要读 UnityModManager 目录里的哈希记录）。
+            var configIsOurs = File.Exists(DoorstopConfigPath) && DoorstopConfigLooksLikeOurs();
+            var winhttpIsOurs = File.Exists(WinhttpPath) && (configIsOurs || WinhttpLooksLikeOurs());
+
             if (File.Exists(DoorstopConfigPath))
             {
-                if (DoorstopConfigLooksLikeOurs())
+                if (configIsOurs)
                 {
                     File.Delete(DoorstopConfigPath);
                     removed.Add("doorstop_config.ini");
@@ -218,7 +269,7 @@ public sealed class LoaderService
 
             if (File.Exists(WinhttpPath))
             {
-                if (WinhttpLooksLikeOurs())
+                if (winhttpIsOurs)
                 {
                     File.Delete(WinhttpPath);
                     removed.Add("winhttp.dll");
@@ -229,11 +280,23 @@ public sealed class LoaderService
                 }
             }
 
-            var backup = WinhttpPath + ".amm-backup";
-            if (File.Exists(backup))
+            // 部署时备份的其它加载器文件：只在原位置已经空出来时恢复，不覆盖上面保留下来的文件
+            foreach (var original in new[] { WinhttpPath, DoorstopConfigPath })
             {
-                File.Move(backup, WinhttpPath, true);
-                removed.Add("（已恢复原 winhttp.dll）");
+                var backup = original + ".amm-backup";
+                if (!File.Exists(backup))
+                {
+                    continue;
+                }
+
+                if (File.Exists(original))
+                {
+                    kept.Add($"{Path.GetFileName(backup)}（原位置已有文件，未恢复）");
+                    continue;
+                }
+
+                File.Move(backup, original);
+                removed.Add($"（已恢复原 {Path.GetFileName(original)}）");
             }
 
             if (Directory.Exists(LoaderPath))
@@ -248,7 +311,7 @@ public sealed class LoaderService
 
             if (kept.Count > 0)
             {
-                message += "\n以下文件不是 Aurora 装的，已保留：" + string.Join("、", kept);
+                message += "\n以下文件已保留：" + string.Join("、", kept);
             }
 
             var status = Detect();
@@ -281,11 +344,20 @@ public sealed class LoaderService
         }
     }
 
-    /// <summary>winhttp.dll 是不是 Aurora 部署的那份（和内置的逐字节比较）。</summary>
+    /// <summary>
+    /// winhttp.dll 是不是 Aurora 部署的那份：
+    /// 和内置的逐字节比较，或者和部署时记下的哈希一致（资源站 / 本地导入的内核）。
+    /// </summary>
     private bool WinhttpLooksLikeOurs()
     {
         try
         {
+            if (File.Exists(DeployMarkerPath) &&
+                string.Equals(File.ReadAllText(DeployMarkerPath).Trim(), Sha256Of(WinhttpPath), StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
             var bundled = Path.Combine(AppContext.BaseDirectory, "Resources", "UmmLoader");
 
             foreach (var name in new[] { "winhttp_x64.dll", "winhttp_x86.dll" })
