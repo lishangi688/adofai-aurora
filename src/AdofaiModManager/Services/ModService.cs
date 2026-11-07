@@ -86,7 +86,20 @@ public sealed class ModService
             return result;
         }
 
-        CleanupTempFolders();
+        // 清理 / 恢复临时目录要和安装互斥：安装进行中时 .aurora-new-* / .aurora-old-* 正在使用，
+        // 这时清理会删掉正在合并的暂存目录，或者把刚挪开的旧版本"恢复"回去。
+        // 拿不到锁就跳过这一次清理（列表照常扫描，下次再清）；用 Wait(0) 不会因为嵌套调用而死锁。
+        if (OperationGate.Wait(0))
+        {
+            try
+            {
+                CleanupTempFolders();
+            }
+            finally
+            {
+                OperationGate.Release();
+            }
+        }
 
         // Params.xml 只读一次（原来每个 mod 都重新解析一遍整个文件）
         var enabledStates = Params.ReadAll();
