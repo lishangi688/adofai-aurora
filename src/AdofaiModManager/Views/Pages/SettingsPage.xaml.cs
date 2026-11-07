@@ -515,9 +515,15 @@ public partial class SettingsPage : Page
         {
             Directory.CreateDirectory(AppPaths.LogDirectory);
 
-            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+            // 文件名精确到秒，重名再加序号：ZipArchiveMode.Create 用的是 CreateNew，
+            // 以前精确到分钟，同一分钟内导出第二次必定报"文件已存在"
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             var path = Path.Combine(desktop, $"Aurora-诊断-{stamp}.zip");
+            for (var n = 2; File.Exists(path); n++)
+            {
+                path = Path.Combine(desktop, $"Aurora-诊断-{stamp}-{n}.zip");
+            }
 
             var utf8 = new System.Text.UTF8Encoding(false);
 
