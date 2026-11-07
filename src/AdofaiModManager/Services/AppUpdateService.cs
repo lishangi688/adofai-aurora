@@ -62,8 +62,8 @@ public sealed record AppUpdateInfo(
 ///
 /// 两边都查，取版本号更高的那个；都查不到就当作"已是最新"（不打扰用户）。
 ///
-/// 这里只做「提示 + 打开下载页」，**不自动替换正在运行的程序**：
-/// 安装版装在 Program Files 下需要管理员权限，交给用户手动更新更稳妥。
+/// 这里只负责「检查」；下载、校验和替换在 <see cref="AppSelfUpdater"/> 里：
+/// 安装版下载安装包后交给安装向导，绿色版解压后由外部脚本在 Aurora 退出后覆盖并重启。
 /// </summary>
 public static class AppUpdateService
 {
