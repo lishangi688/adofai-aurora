@@ -386,9 +386,10 @@ public partial class InstalledModsPage : Page
         {
             PathToExplorer.Open(mod.FolderPath);
         }
-        catch (InvalidPathException)
+        catch (InvalidPathException ex)
         {
             AppPaths.AppendDebugLog($"[open] 无效路径: {mod.FolderPath}");
+            Report(false, $"这个 Mod 的文件夹路径包含无效字符，无法打开（{ex.Message}）。");
         }
         catch (Exception ex)
         {

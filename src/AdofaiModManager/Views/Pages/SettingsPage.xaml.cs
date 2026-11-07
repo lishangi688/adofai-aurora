@@ -614,6 +614,7 @@ public partial class SettingsPage : Page
             catch (InvalidPathException)
             {
                 AppPaths.AppendDebugLog($"[open] 无效路径: {path}");
+                DiagnosticsStatusText.Text += "\n（路径包含无效字符，没能自动打开所在文件夹，请手动前往桌面查看。）";
             }
             catch
             {

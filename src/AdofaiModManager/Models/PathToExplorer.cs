@@ -15,9 +15,6 @@ namespace AdofaiModManager.Models
     /// </summary>
     internal static class PathToExplorer
     {
-        [ThreadStatic]
-        public static readonly StringBuilder sb = new();
-
         public static Process? Open(string path)
         {
             return Process.Start(new ProcessStartInfo("explorer.exe", ConvertString(path)) { UseShellExecute = true });
@@ -29,7 +26,8 @@ namespace AdofaiModManager.Models
 
         private static string ConvertString(string path)
         {
-            sb.Length = 0;
+            // 局部变量即可：原来的 [ThreadStatic] 静态字段，初始化器只在第一个访问它的线程上执行，换线程会拿到 null
+            var sb = new StringBuilder(path.Length + 2);
             sb.Append('"');
             bool disk = false;
             for (int i = 0; i < path.Length; i++)
