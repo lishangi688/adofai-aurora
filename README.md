@@ -128,6 +128,7 @@ powershell -ExecutionPolicy Bypass `
 
 - [@create-xiaoyu](https://github.com/create-xiaoyu)：安装安全、更新检查与稳定性修复（[PR #2](https://github.com/lishangi688/adofai-aurora/pull/2)）。
 - [@xbodwf](https://github.com/xbodwf)：Markdown 渲染器；多加载器可行性调研（[PR #1](https://github.com/lishangi688/adofai-aurora/pull/1)）。
+- [@ModsTag](https://github.com/ModsTag)：修复「打开 Mod 文件夹」时分隔符混用导致跳转到「文档」的问题（[PR #4](https://github.com/lishangi688/adofai-aurora/pull/4)），并促成了 0.1.13 的游戏目录路径处理改进。
 
 ## 许可证
 
