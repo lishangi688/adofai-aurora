@@ -786,8 +786,17 @@ public sealed class ModService
 
         try
         {
-            Params.SetEnabled(mod.Id, enabled);
-            return new InstallResult(true, enabled ? $"已启用 {mod.DisplayName}。" : $"已禁用 {mod.DisplayName}。", mod.Id);
+            var brokenBackup = Params.SetEnabled(mod.Id, enabled);
+            var message = enabled ? $"已启用 {mod.DisplayName}。" : $"已禁用 {mod.DisplayName}。";
+
+            if (brokenBackup is not null)
+            {
+                // 重建后其它 mod 在 UMM 里会按默认（启用）处理，UMM 自己的设置也回到默认
+                message += $"\n注意：原来的 Params.xml 已损坏，已备份为 {brokenBackup} 并重新生成；"
+                           + "其它 mod 的启用状态和 UMM 设置已恢复为默认。";
+            }
+
+            return new InstallResult(true, message, mod.Id);
         }
         catch (Exception ex)
         {
