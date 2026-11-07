@@ -109,10 +109,12 @@ dotnet run --project src/AdofaiModManager
 ```powershell
 powershell -ExecutionPolicy Bypass `
   -File installer/build-installer.ps1 `
-  -Version 0.1.6
+  -Version <版本号> -Installer
 ```
 
-默认生成绿色版 ZIP，发布目录为 `dist\Aurora\`。需要安装包时，加上 `-Installer` 参数。
+默认只生成绿色版 ZIP，发布目录为 `dist\Aurora\`。加上 `-Installer` 参数会同时生成安装包、资源站用的合并包和 `SHA256SUMS.txt`。
+
+发布到 GitHub 时，请把 `SHA256SUMS.txt` 和安装包、绿色版 ZIP 一起上传：Aurora 自动更新时会用它核对下载的文件（包括从资源站下载的合并包）。
 
 ## 致谢
 

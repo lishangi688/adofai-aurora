@@ -44,16 +44,14 @@ public sealed class SettingsService
 
             // 读不出来的配置先留一份备份再说：下一次 Save 会用默认值覆盖它，
             // 不备份的话用户填过的 API key、游戏目录就彻底找不回来了
-            try
-            {
-                File.Copy(ConfigFilePath, ConfigFilePath + ".broken", true);
-            }
-            catch
-            {
-                // 忽略
-            }
+            AppPaths.BackupBrokenFile(ConfigFilePath, ex);
+        }
 
-            AppPaths.AppendDebugLog($"[settings] 配置文件损坏，已备份为 settings.json.broken 并使用默认配置：{ex.Message}");
+        // 旧版本可能存过 "c:/program files (x86)/steam\steamapps\..." 这种混合写法的游戏目录
+        //（来自 Steam 注册表），读进来时顺手纠正，下次保存就写回规范写法
+        if (!string.IsNullOrWhiteSpace(Settings.GamePath))
+        {
+            Settings.GamePath = SteamGameLocator.NormalizePath(Settings.GamePath);
         }
 
         // 诊断日志开关跟设置走（默认开）

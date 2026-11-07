@@ -95,8 +95,7 @@ public partial class MainWindow : FluentWindow
 
         try
         {
-            System.Diagnostics.Process.Start(
-                new System.Diagnostics.ProcessStartInfo(_appUpdate.PageUrl) { UseShellExecute = true });
+            ExternalLinks.Open(_appUpdate.PageUrl);
         }
         catch
         {

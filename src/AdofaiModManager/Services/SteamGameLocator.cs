@@ -96,6 +96,28 @@ public sealed class SteamGameLocator
         return score;
     }
 
+    /// <summary>
+    /// 统一路径写法：去掉首尾空白，"/" 换成 "\"，去掉结尾的分隔符（盘符根目录除外）。
+    ///
+    /// Steam 注册表里的 SteamPath 本身就是 "c:/program files (x86)/steam" 这种正斜杠写法，
+    /// 不处理的话拼出来的游戏目录会变成 "c:/program files (x86)/steam\steamapps\..."：
+    /// 既和 "C:\Program Files (x86)\Steam" 去不了重，还会被存进设置，
+    /// Explorer 不认这种混合写法，会直接打开「文档」文件夹。
+    ///
+    /// 故意不用 Path.GetFullPath：设置页里边输入边保存，"D:" 这种半截输入会被解析成 D 盘的当前目录。
+    /// </summary>
+    public static string NormalizePath(string path)
+    {
+        var normalized = path.Trim().Replace('/', '\\');
+
+        while (normalized.Length > 3 && normalized.EndsWith('\\'))
+        {
+            normalized = normalized[..^1];
+        }
+
+        return normalized;
+    }
+
     /// <summary>枚举所有 Steam 库目录（含 Steam 安装目录本身）。</summary>
     public IReadOnlyList<string> FindSteamLibraries()
     {
@@ -108,7 +130,7 @@ public sealed class SteamGameLocator
                 return;
             }
 
-            var normalized = path.Trim().TrimEnd('\\', '/');
+            var normalized = NormalizePath(path);
             if (Directory.Exists(normalized) && !libraries.Contains(normalized, StringComparer.OrdinalIgnoreCase))
             {
                 libraries.Add(normalized);

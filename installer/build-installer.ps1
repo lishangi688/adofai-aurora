@@ -13,6 +13,7 @@
 #       结构：portable\（绿色版文件） + Setup.exe + 说明.txt + update.json
 #       原因：资源站一个版本只能挂一个 zip，所以把两种形态打在一起；
 #             客户端按自己的形态取用（绿色版用 portable\，安装版取 Setup.exe）。
+#   dist\SHA256SUMS.txt                上面三个文件的 SHA256（需要 -Installer；发版时上传到 GitHub Release）
 
 param(
     [string]$Version = "0.1.12.2",
@@ -150,6 +151,23 @@ $manifest = @{
 $allZip = "dist\Aurora-$Version-all.zip"
 New-ZipArchive -SourceDir $stage -ZipPath (Join-Path (Get-Location) $allZip)
 Remove-Item $stage -Recurse -Force
+
+# 校验文件：Aurora 自动更新下载完安装包 / 压缩包后，会到 GitHub 本版本的 Release 里取
+# SHA256SUMS.txt 核对哈希（资源站的合并包也在里面，所以资源站下载的包同样能核对）。
+# ⚠ 发版时务必把它和安装包、绿色版 zip 一起上传到 GitHub Release。
+Write-Host ''
+Write-Host "==> 生成 SHA256SUMS.txt" -ForegroundColor Cyan
+$sumsPath = 'dist\SHA256SUMS.txt'
+$hashLines = @(
+    "dist\Aurora-v$Version-win-x64.zip",
+    "dist\installer\Aurora-Setup-$Version.exe",
+    $allZip
+) | ForEach-Object {
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
+    "$hash  $(Split-Path -Leaf $_)"
+}
+[IO.File]::WriteAllText($sumsPath, ($hashLines -join "`n") + "`n", (New-Object System.Text.UTF8Encoding $false))
+Write-Host "    $sumsPath"
 
 Write-Host ''
 Write-Host '完成 ✅' -ForegroundColor Green

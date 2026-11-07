@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -110,7 +109,7 @@ public partial class FirstRunWizard : FluentWindow
 
     private void GamePathBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        AppServices.Settings.Settings.GamePath = GamePathBox.Text.Trim();
+        AppServices.Settings.Settings.GamePath = SteamGameLocator.NormalizePath(GamePathBox.Text);
         AppServices.Settings.Save();
         UpdateGameStatus();
     }
@@ -379,7 +378,7 @@ public partial class FirstRunWizard : FluentWindow
         try
         {
             var kernel = new KernelService(loader);
-            var (imported, message) = await kernel.ImportAsync(dialog.FileName);
+            var (imported, message) = await kernel.ImportAsync(dialog.FileName, allowLocalFile: true);
 
             if (imported is null)
             {
@@ -537,7 +536,7 @@ public partial class FirstRunWizard : FluentWindow
 
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            ExternalLinks.Open(url);
         }
         catch
         {

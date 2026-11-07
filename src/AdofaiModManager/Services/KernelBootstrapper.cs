@@ -88,32 +88,48 @@ public sealed class KernelBootstrapper(LoaderService loader)
             : Kernel.Deploy(bundled);
     }
 
-    /// <summary>从资源站「工具库」找最新的 UnityModManager 版本与文件。</summary>
+    /// <summary>
+    /// UnityModManager 在 ADOFAI Tools 工具库里的 slug（固定值，不按名字搜索）。
+    ///
+    /// 这里下到的内核会把 winhttp.dll 部署进游戏目录、注入游戏进程，
+    /// 不能用"名字里包含 UnityModManager"这种谁都能满足的条件来认。
+    /// 站点上的条目如果重建、slug 变了，认不出来只会退回内置内核，不会装错东西。
+    /// </summary>
+    public const string SiteKernelSlug = "tool-1717b65f";
+
+    /// <summary>从资源站「工具库」取 UnityModManager 的最新版本与文件。</summary>
     public static async Task<(string VersionId, string FileId)?> FindLatestSiteKernelAsync(
         AdofaiToolsClient client,
         CancellationToken ct = default)
     {
-        var list = await client.GetToolsAsync("UnityModManager", 1, 20, ct);
-        var tool = list.Items.FirstOrDefault(t =>
-            t.DisplayName.Contains("UnityModManager", StringComparison.OrdinalIgnoreCase));
-
-        if (tool is null)
+        // 只认 ADOFAI Tools：默认站点被换成别的地址时，不从那里取要注入游戏的内核
+        if (!AppServices.IsAdofaiToolsHost(client.ApiRoot))
         {
             return null;
         }
 
-        var detail = await client.GetToolDetailAsync(tool.Slug, ct);
-        var latestId = tool.LatestVersion?.VersionId;
+        ToolDetail detail;
+        try
+        {
+            detail = await client.GetToolDetailAsync(SiteKernelSlug, ct);
+        }
+        catch (AdofaiToolsException)
+        {
+            // 404（条目不存在 / 自定义站点上没有这个 slug）等：当作站点上没有内核
+            return null;
+        }
+
+        if (!string.Equals(detail.Slug, SiteKernelSlug, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
 
         // 注意：接口返回的 versions 不一定按新到旧排序
-        var version = detail.Versions.FirstOrDefault(v =>
-                          !string.IsNullOrWhiteSpace(latestId) &&
-                          string.Equals(v.VersionId, latestId, StringComparison.OrdinalIgnoreCase))
-                      ?? detail.Versions
-                          .Where(v => !string.IsNullOrWhiteSpace(v.VersionId))
-                          .OrderByDescending(v => v.VersionId!,
-                              Comparer<string>.Create((a, b) => KernelService.CompareVersions(a, b)))
-                          .FirstOrDefault();
+        var version = detail.Versions
+            .Where(v => !string.IsNullOrWhiteSpace(v.VersionId))
+            .OrderByDescending(v => v.VersionId!,
+                Comparer<string>.Create((a, b) => KernelService.CompareVersions(a, b)))
+            .FirstOrDefault();
 
         return version?.File is null || string.IsNullOrWhiteSpace(version.VersionId)
             ? null

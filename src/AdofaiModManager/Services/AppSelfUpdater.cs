@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -66,23 +67,46 @@ public static class AppSelfUpdater
 
             var packagePath = Path.Combine(packageDir, SanitizeFileName(fileName));
 
-            if (File.Exists(url))
+            // 只有开发用的本地测试包允许走"本地文件"：远端（资源站 / GitHub）给出的地址一律当 URL，
+            // 否则一个 \\host\share\x.zip 这样的值会让 File.Exists 去连 SMB 共享
+            var verifyNote = string.Empty;
+
+            if (info.IsLocalTestPackage)
             {
-                // 本地文件（开发测试用）
                 progress?.Report($"正在读取本地更新包 v{info.Version} …");
                 File.Copy(url, packagePath, true);
             }
             else
             {
+                if (!IsHttpUrl(url))
+                {
+                    return new SelfUpdateResult(false, "更新地址不是有效的网络地址，已中止。请到发布页手动下载。");
+                }
+
                 progress?.Report($"正在下载 v{info.Version} …　0%");
                 await DownloadAsync(url, packagePath, progress, info.Version, ct);
+
+                // 用 GitHub Release 里的 SHA256SUMS.txt 核对：资源站下载的包也能核对
+                progress?.Report("正在校验下载的文件…");
+                switch (await VerifyChecksumAsync(packagePath, info.Version, ct))
+                {
+                    case ChecksumResult.Mismatch:
+                        TryDeleteDirectory(workRoot);
+                        return new SelfUpdateResult(
+                            false,
+                            $"校验失败：下载的文件与 GitHub 发布页公布的 SHA256 不一致，已中止更新（文件可能被篡改或下载不完整）。请到发布页手动下载。");
+
+                    case ChecksumResult.Unavailable:
+                        verifyNote = "（未能从 GitHub 获取校验文件，本次未做哈希校验）";
+                        break;
+                }
             }
 
             // ---- 安装包：打开安装程序，交给用户走向导 ----
             if (packagePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
                 progress?.Report("下载完成，正在打开安装程序…");
-                return LaunchInstaller(packagePath);
+                return WithNote(LaunchInstaller(packagePath), verifyNote);
             }
 
             // ---- 压缩包：解压出绿色版文件 ----
@@ -109,7 +133,7 @@ public static class AppSelfUpdater
                 TryDeleteDirectory(packageDir);
 
                 progress?.Report("正在打开安装程序…");
-                return LaunchInstaller(setupInside);
+                return WithNote(LaunchInstaller(setupInside), verifyNote);
             }
 
             if (!extracted)
@@ -127,7 +151,7 @@ public static class AppSelfUpdater
 
             // ---- 绿色版：写更新脚本，等 Aurora 退出后替换并重启 ----
             progress?.Report("准备替换文件…");
-            return LaunchPortableUpdater(payloadDir, AppContext.BaseDirectory, workRoot);
+            return WithNote(LaunchPortableUpdater(payloadDir, AppContext.BaseDirectory, workRoot), verifyNote);
         }
         catch (OperationCanceledException)
         {
@@ -349,12 +373,19 @@ public static class AppSelfUpdater
 
             var scriptPath = Path.Combine(Path.GetTempPath(), $"aurora-apply-{Guid.NewGuid():N}.cmd");
 
+            // 路径直接嵌进批处理：% 会被 cmd 当成变量展开，要写成 %%
+            static string Bat(string value) => value.Replace("%", "%%");
+
             // 注意：脚本只能写 ASCII。
             // .NET Core 默认不带 GBK(936) 等旧代码页，而且 cmd 对 UTF-8 中文也不友好，
             // 所以这里的提示/日志一律用英文，避免"编码不可用"这类意外。
+            //
+            // robocopy 退出码 ≥ 8 表示有文件没复制成功（例如被杀毒软件占用）。这时不能照常启动 ——
+            // 程序目录里是新旧混杂的文件。改为保留解压出来的新版本，打开它和日志，让用户手动覆盖。
+            // /R:3 /W:2：robocopy 默认对占用的文件重试 100 万次、每次等 30 秒，等于卡死。
             var script = $"""
                 @echo off
-                set "LOG={log}"
+                set "LOG={Bat(log)}"
                 echo [%date% %time%] waiting for the app to exit... >> "%LOG%"
 
                 :wait
@@ -364,18 +395,29 @@ public static class AppSelfUpdater
                     goto wait
                 )
 
-                echo [%date% %time%] copying new version into "{target}" >> "%LOG%"
-                robocopy "{payloadDir}" "{target}" /E /IS /IT /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
-                echo [%date% %time%] robocopy exit code %errorlevel% >> "%LOG%"
+                echo [%date% %time%] copying new version into "{Bat(target)}" >> "%LOG%"
+                robocopy "{Bat(payloadDir)}" "{Bat(target)}" /E /IS /IT /R:3 /W:2 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
+                set RC=%errorlevel%
+                echo [%date% %time%] robocopy exit code %RC% >> "%LOG%"
+                if %RC% GEQ 8 goto failed
 
-                if /i not "{currentExe}"=="{newExe}" del "{target}\{currentExe}" 2>nul
+                if /i not "{Bat(currentExe)}"=="{Bat(newExe)}" del "{Bat(target)}\{Bat(currentExe)}" 2>nul
 
                 echo [%date% %time%] starting the app... >> "%LOG%"
-                start "" "{newExePath}"
+                start "" "{Bat(newExePath)}"
 
-                rmdir /s /q "{payloadDir}" 2>nul
-                rmdir /s /q "{workRoot}" 2>nul
+                rmdir /s /q "{Bat(payloadDir)}" 2>nul
+                rmdir /s /q "{Bat(workRoot)}" 2>nul
                 del "%~f0" 2>nul
+                exit /b 0
+
+                :failed
+                echo [%date% %time%] UPDATE FAILED: some files could not be replaced. >> "%LOG%"
+                echo Please copy everything in the opened folder "{Bat(payloadDir)}" into "{Bat(target)}" manually, then start Aurora. >> "%LOG%"
+                start "" notepad "%LOG%"
+                start "" explorer "{Bat(payloadDir)}"
+                del "%~f0" 2>nul
+                exit /b 1
                 """;
 
             // 关键：cmd.exe 是按"系统 OEM 代码页"读取批处理文件的。
@@ -384,11 +426,27 @@ public static class AppSelfUpdater
             // 而 .NET Core 默认不带 936 等旧代码页，需要先注册提供程序。
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var encoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+            // 代码页表示不了的字符（例如中文系统上的日文路径）默认会被换成 "?"，脚本就会复制到错误的位置：
+            // 改成遇到就报错，宁可不自动更新
+            var encoding = Encoding.GetEncoding(
+                CultureInfo.CurrentCulture.TextInfo.OEMCodePage,
+                EncoderFallback.ExceptionFallback,
+                DecoderFallback.ExceptionFallback);
 
             // 另外：cmd 对换行很挑，必须是 CRLF（C# 源文件里是 LF）。
             var normalized = script.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            File.WriteAllText(scriptPath, normalized, encoding);
+
+            try
+            {
+                File.WriteAllText(scriptPath, normalized, encoding);
+            }
+            catch (EncoderFallbackException)
+            {
+                TryDeleteFile(scriptPath);
+                return new SelfUpdateResult(
+                    false,
+                    "程序所在目录或临时目录的路径里有当前系统编码无法表示的字符，无法自动替换文件。请到发布页手动下载更新。");
+            }
 
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"")
             {
@@ -417,6 +475,18 @@ public static class AppSelfUpdater
         catch
         {
             // 删不掉就在原目录上重试
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // 忽略
         }
     }
 
@@ -473,7 +543,7 @@ public static class AppSelfUpdater
     /// </summary>
     private static string ResolveFileName(AppUpdateInfo info, string url, bool isInstaller)
     {
-        if (File.Exists(url))
+        if (info.IsLocalTestPackage)
         {
             var local = Path.GetFileName(url);
             if (!string.IsNullOrWhiteSpace(local))
@@ -502,6 +572,83 @@ public static class AppSelfUpdater
 
         return isInstaller ? "setup.exe" : "update.zip";
     }
+
+    private enum ChecksumResult
+    {
+        /// <summary>哈希出现在 SHA256SUMS.txt 里</summary>
+        Verified,
+
+        /// <summary>拿到了校验文件，但哈希对不上</summary>
+        Mismatch,
+
+        /// <summary>拿不到校验文件（GitHub 连不上 / 旧版本没有发布校验文件）</summary>
+        Unavailable,
+    }
+
+    /// <summary>
+    /// 到 GitHub 本版本的 Release 里取 SHA256SUMS.txt，核对下载文件的哈希。
+    ///
+    /// 校验文件由 installer\build-installer.ps1 生成，包含绿色版 zip、安装包和资源站合并包三个文件，
+    /// 所以不管从哪个通道下载，只要能连上 GitHub 就能核对。
+    /// 连不上 GitHub 时（国内常见）退化为不校验，并在结果里注明 —— 资源站通道已经固定了条目 slug，
+    /// 校验主要是防"资源站上的文件被替换"。
+    /// </summary>
+    private static async Task<ChecksumResult> VerifyChecksumAsync(string filePath, string version, CancellationToken ct)
+    {
+        string sums;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+
+            var url = $"https://github.com/{AppUpdateService.GitHubOwner}/{AppUpdateService.GitHubRepo}"
+                      + $"/releases/download/v{Uri.EscapeDataString(version)}/SHA256SUMS.txt";
+
+            using var response = await Http.GetAsync(url, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                AppPaths.AppendDebugLog($"[selfupdate] 取校验文件失败：{(int)response.StatusCode}");
+                return ChecksumResult.Unavailable;
+            }
+
+            sums = await response.Content.ReadAsStringAsync(timeout.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            AppPaths.AppendDebugLog($"[selfupdate] 取校验文件失败：{ex.Message}");
+            return ChecksumResult.Unavailable;
+        }
+
+        // 每行：<64 位十六进制>  <文件名>（sha256sum 格式，文件名前可能带 *）
+        var known = sums
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split(' ', 2)[0])
+            .Where(hash => hash.Length == 64 && hash.All(Uri.IsHexDigit))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (known.Count == 0)
+        {
+            AppPaths.AppendDebugLog("[selfupdate] 校验文件里没有可用的哈希");
+            return ChecksumResult.Unavailable;
+        }
+
+        string actual;
+        using (var stream = File.OpenRead(filePath))
+        {
+            actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct));
+        }
+
+        var ok = known.Contains(actual);
+        AppPaths.AppendDebugLog($"[selfupdate] 校验 {Path.GetFileName(filePath)} sha256={actual} 结果={(ok ? "通过" : "不一致")}");
+        return ok ? ChecksumResult.Verified : ChecksumResult.Mismatch;
+    }
+
+    private static bool IsHttpUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+
+    private static SelfUpdateResult WithNote(SelfUpdateResult result, string note) =>
+        result.Success && note.Length > 0 ? result with { Message = result.Message + note } : result;
 
     private static string SanitizeFileName(string name)
     {

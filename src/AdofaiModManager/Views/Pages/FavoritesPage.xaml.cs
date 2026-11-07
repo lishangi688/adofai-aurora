@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -191,7 +190,7 @@ public partial class FavoritesPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            ExternalLinks.Open(url);
         }
         catch (Exception ex)
         {

@@ -71,9 +71,13 @@ public sealed class UmmParamsService(string paramsFilePath)
         return result;
     }
 
-    public void SetEnabled(string modId, bool enabled)
+    /// <summary>
+    /// 设置某个 mod 的启用状态。
+    /// 返回 Params.xml 原本已损坏时备份到的文件名（没损坏返回 null），调用方要告诉用户。
+    /// </summary>
+    public string? SetEnabled(string modId, bool enabled)
     {
-        var doc = LoadOrCreate();
+        var doc = LoadOrCreate(out var brokenBackup);
         var root = doc.Root;
         if (root is null)
         {
@@ -103,7 +107,12 @@ public sealed class UmmParamsService(string paramsFilePath)
             Directory.CreateDirectory(dir);
         }
 
-        doc.Save(ParamsFilePath);
+        // 原子写：先写临时文件再整体替换，写到一半中断不会留下半截 XML
+        var temp = $"{ParamsFilePath}.{Guid.NewGuid():N}.tmp";
+        doc.Save(temp);
+        File.Move(temp, ParamsFilePath, true);
+
+        return brokenBackup;
     }
 
     private static XElement? FindMod(XDocument doc, string modId)
@@ -114,17 +123,33 @@ public sealed class UmmParamsService(string paramsFilePath)
             .FirstOrDefault(e => string.Equals((string?)e.Attribute("Id"), modId, StringComparison.OrdinalIgnoreCase));
     }
 
-    private XDocument LoadOrCreate()
+    /// <summary>
+    /// 读 Params.xml；不存在就新建。
+    /// 解析失败时**先备份**成 Params.xml.broken 再重建：里面除了各 mod 的启用状态，
+    /// 还有 UMM 自己的设置（快捷键、窗口位置等），以前直接覆盖就全丢了。
+    /// </summary>
+    private XDocument LoadOrCreate(out string? brokenBackup)
     {
+        brokenBackup = null;
+
         if (File.Exists(ParamsFilePath))
         {
             try
             {
                 return XDocument.Load(ParamsFilePath);
             }
-            catch
+            catch (Exception ex)
             {
-                // 损坏则重建
+                var backup = ParamsFilePath + ".broken";
+                if (File.Exists(backup))
+                {
+                    backup = $"{ParamsFilePath}.broken-{DateTime.Now:yyyyMMddHHmmss}";
+                }
+
+                // 备份失败就不要继续重建（宁可这次改不成，也不能把唯一的原文件覆盖掉）
+                File.Copy(ParamsFilePath, backup, false);
+                brokenBackup = Path.GetFileName(backup);
+                AppPaths.AppendDebugLog($"[params] Params.xml 无法解析，已备份为 {brokenBackup} 并重建：{ex.Message}");
             }
         }
 

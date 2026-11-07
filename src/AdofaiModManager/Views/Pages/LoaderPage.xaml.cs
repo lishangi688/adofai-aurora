@@ -375,7 +375,7 @@ public partial class LoaderPage : Page
         try
         {
             Report(true, "正在导入内核…");
-            var (imported, message) = await kernel.ImportAsync(dialog.FileName);
+            var (imported, message) = await kernel.ImportAsync(dialog.FileName, allowLocalFile: true);
             if (imported is null)
             {
                 Report(false, message);
@@ -425,9 +425,10 @@ public partial class LoaderPage : Page
         {
             PathToExplorer.Open(loader.GamePath);
         }
-        catch (InvalidPathException)
+        catch (InvalidPathException ex)
         {
             AppPaths.AppendDebugLog($"[open] 无效路径: {loader.GamePath}");
+            Report(new InstallResult(false, $"游戏目录路径包含无效字符，无法打开（{ex.Message}）。请到「设置」里检查游戏目录。"));
         }
         catch (Exception ex)
         {

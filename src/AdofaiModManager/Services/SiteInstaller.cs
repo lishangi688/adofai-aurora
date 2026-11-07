@@ -12,17 +12,20 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
     public Task<InstallResult> InstallAsync(
         ModDetail detail,
         IProgress<int>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? expectedId = null)
     {
-        return InstallAsync(detail, detail.PreferredFile, detail.LatestVersion?.VersionId, progress, ct);
+        return InstallAsync(detail, detail.PreferredFile, detail.LatestVersion?.VersionId, progress, ct, expectedId);
     }
 
+    /// <param name="expectedId">更新已安装 mod 时传入它的 Id：包里的 Id 对不上就拒绝（见 ModService.InstallFromZip）</param>
     public async Task<InstallResult> InstallAsync(
         ModDetail detail,
         ModVersionFile? file,
         string? versionId,
         IProgress<int>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? expectedId = null)
     {
         if (file is null)
         {
@@ -34,7 +37,7 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
         // 1) 本地已有这一版的包 → 直接装（不联网）
         if (cacheName is not null && ModService.GetCachedZip(cacheName) is { } cachedZip)
         {
-            var fromCache = modService.InstallFromZip(cachedZip);
+            var fromCache = modService.InstallFromZip(cachedZip, expectedId);
             if (fromCache.Success)
             {
                 RememberSource(detail, fromCache);
@@ -44,7 +47,7 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
 
         // 2) 下载并安装（成功后会把包留在缓存里）
         var intent = await client.CreateDownloadIntentAsync(file.Id, ct);
-        var result = await modService.InstallFromUrlAsync(intent.Url, progress, ct, cacheName);
+        var result = await modService.InstallFromUrlAsync(intent.Url, progress, ct, cacheName, expectedId);
 
         RememberSource(detail, result);
         return result;

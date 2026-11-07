@@ -193,6 +193,24 @@ public static class AppPaths
         File.Move(temp, path, true);
     }
 
+    /// <summary>
+    /// 数据文件（设置 / 收藏 / 安装映射 / 更新源）读不出来时，先复制一份 *.broken 再说：
+    /// 调用方会换成默认值，下一次保存就把原文件覆盖了，不备份的话用户的数据就彻底找不回来。
+    /// </summary>
+    public static void BackupBrokenFile(string path, Exception reason)
+    {
+        try
+        {
+            File.Copy(path, path + ".broken", true);
+        }
+        catch
+        {
+            // 忽略
+        }
+
+        AppendDebugLog($"[data] {Path.GetFileName(path)} 无法读取，已备份为 {Path.GetFileName(path)}.broken 并使用默认值：{reason.Message}");
+    }
+
     /// <summary>文件超过上限就轮转（保留一份上一版；没有上一版可留时直接清空）。</summary>
     private static void RotateIfNeeded(string path, long limit, string? previousPath = null)
     {

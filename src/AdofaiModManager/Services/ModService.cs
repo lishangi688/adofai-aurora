@@ -49,6 +49,34 @@ public sealed class ModService
     /// </summary>
     private const string TempFolderPrefix = ".aurora-";
 
+    /// <summary>
+    /// 全局互斥：同一时间只允许一个"改 Mods 目录 / Params.xml"的操作（安装、更新、卸载、启停）。
+    ///
+    /// 「已安装」「在线 Mod」「收藏」三个页面各有自己的忙碌标记，互相看不见；以前没出事
+    /// 只是因为 InstallFromZip 碰巧总在 UI 线程上同步执行。这里不排队，直接拒绝第二个请求，
+    /// 让用户看到明确的提示。静态的：每个页面都会 new 自己的 ModService。
+    /// </summary>
+    private static readonly SemaphoreSlim OperationGate = new(1, 1);
+
+    private const string BusyMessage = "另一个 Mod 安装 / 更新 / 卸载操作正在进行，请等它完成后再试。";
+
+    private static InstallResult RunExclusive(Func<InstallResult> operation)
+    {
+        if (!OperationGate.Wait(0))
+        {
+            return new InstallResult(false, BusyMessage);
+        }
+
+        try
+        {
+            return operation();
+        }
+        finally
+        {
+            OperationGate.Release();
+        }
+    }
+
     public IReadOnlyList<InstalledMod> Scan()
     {
         var result = new List<InstalledMod>();
@@ -58,7 +86,20 @@ public sealed class ModService
             return result;
         }
 
-        CleanupTempFolders();
+        // 清理 / 恢复临时目录要和安装互斥：安装进行中时 .aurora-new-* / .aurora-old-* 正在使用，
+        // 这时清理会删掉正在合并的暂存目录，或者把刚挪开的旧版本"恢复"回去。
+        // 拿不到锁就跳过这一次清理（列表照常扫描，下次再清）；用 Wait(0) 不会因为嵌套调用而死锁。
+        if (OperationGate.Wait(0))
+        {
+            try
+            {
+                CleanupTempFolders();
+            }
+            finally
+            {
+                OperationGate.Release();
+            }
+        }
 
         // Params.xml 只读一次（原来每个 mod 都重新解析一遍整个文件）
         var enabledStates = Params.ReadAll();
@@ -117,10 +158,21 @@ public sealed class ModService
     ///
     /// 流程刻意做成"先准备好新版本，再替换旧版本"：
     ///  ① 整包解压到 Mods 下的临时文件夹（包坏了 / 磁盘满了，旧版本毫发无损）；
-    ///  ② 把旧版本文件夹整个改名挪开（文件被占用时这一步就会失败 → 原样还原，不会删出半个 mod）；
-    ///  ③ 新版本改名成正式文件夹，最后才删掉旧版本。
+    ///  ② 在临时文件夹里把旧版本的内容补进来（新包里有的文件以新包为准），合并成完整的新版本；
+    ///  ③ 把旧版本文件夹整个改名挪开（文件被占用时这一步就会失败 → 原样还原，不会删出半个 mod）；
+    ///  ④ 临时文件夹**一次改名**成正式文件夹，最后才删掉旧版本。
+    ///
+    /// ⚠ 正式文件夹只能靠④这一次改名出现，改名前在暂存目录里写入完成标记（.aurora-complete）。
+    /// CleanupTempFolders 只有看到正式文件夹带着这个标记，才会删除旧版本备份；
+    /// 没有标记的（例如 0.1.10～0.1.12.2 在正式目录里逐个复制、中途被强杀留下的半个目录）一律按"不确定完整"处理。
+    ///
+    /// expectedId：从「已安装」页更新某个 mod 时传入它的 Id。更新来源是按名字匹配的，
+    /// 匹配错了会下到另一个 mod；包里的 Id 对不上就拒绝，不能装成别的东西。
     /// </summary>
-    public InstallResult InstallFromZip(string zipPath)
+    public InstallResult InstallFromZip(string zipPath, string? expectedId = null) =>
+        RunExclusive(() => InstallFromZipCore(zipPath, expectedId));
+
+    private InstallResult InstallFromZipCore(string zipPath, string? expectedId)
     {
         if (!File.Exists(zipPath))
         {
@@ -170,6 +222,14 @@ public sealed class ModService
                     return new InstallResult(false, $"Info.json 里的 Id「{info.Id}」不能用作文件夹名，已拒绝安装。");
                 }
 
+                if (expectedId is not null && !string.Equals(info.Id, expectedId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new InstallResult(
+                        false,
+                        $"下载到的是「{info.DisplayName ?? info.Id}」（Id：{info.Id}），不是要更新的「{expectedId}」，已取消安装。"
+                        + "这通常是更新来源匹配错了，可以点「绑定 GitHub」手动指定更新源。");
+                }
+
                 var infoPath = Normalize(infoEntry.FullName);
                 var prefix = infoPath[..^"Info.json".Length];
 
@@ -193,10 +253,31 @@ public sealed class ModService
                 oldFolders.Add(targetDir);
             }
 
-            // 顺手把旧版本的设置（Settings.xml）留下来，更新后写回去，避免每次更新丢设置
-            var previousSettings = TryReadPreviousSettings(oldFolders);
+            // ② 覆盖安装：在临时文件夹里把旧版本的内容补进来。
+            //    mod 常把自己的配置（各种 json / 子文件夹）写在自己的文件夹里，
+            //    所以保留旧目录的全部内容，只用新包里带的文件覆盖。
+            //    多份重复文件夹时，优先用"名字正好等于 Id"的那份作为基础。
+            var baseFolder = oldFolders.FirstOrDefault(f =>
+                                 string.Equals(f, targetDir, StringComparison.OrdinalIgnoreCase))
+                             ?? oldFolders.FirstOrDefault();
 
-            // ② 旧版本整个挪开（失败就还原，保证不会出现"删了一半"）
+            if (baseFolder is not null && Directory.Exists(baseFolder))
+            {
+                OverlayDirectory(baseFolder, staging, overwriteExisting: false);
+            }
+
+            // 新包和基础文件夹里都没有 Settings.xml 时，沿用其它重复文件夹里的那份，避免更新后 mod 设置被重置
+            var stagedSettings = Path.Combine(staging, "Settings.xml");
+            if (!File.Exists(stagedSettings) && TryReadPreviousSettings(oldFolders) is { } previousSettings)
+            {
+                File.WriteAllBytes(stagedSettings, previousSettings);
+            }
+
+            // 完成标记：合并全部完成后才写，随整个目录一起改名就位。
+            // CleanupTempFolders 只在正式目录带着这个标记时才删旧版本备份（见 RecoverOldBackup）
+            File.WriteAllText(Path.Combine(staging, CompleteMarkerName), string.Empty);
+
+            // ③ 旧版本整个挪开（失败就还原，保证不会出现"删了一半"）
             var moved = new List<(string Original, string Backup)>();
             foreach (var folder in oldFolders)
             {
@@ -215,52 +296,17 @@ public sealed class ModService
                 }
             }
 
-            // ③ 覆盖安装：先把旧版本的内容放回去，再用新包覆盖。
-            //    以前是"挪走旧目录 → 把新包改名就位"，旧目录里 mod 自己写进去的
-            //    配置（各种 json / 子文件夹）会一起消失，只保住了 Settings.xml。
-            //    现在保留旧目录的全部内容，只覆盖新包里带的文件。
+            // ④ 合并好的新版本一次改名就位（同一个文件夹内改名是原子的）
             try
             {
-                Directory.CreateDirectory(targetDir);
-
-                // 多份重复文件夹时，优先用"名字正好等于 Id"的那份作为基础
-                var baseFolder = moved
-                    .FirstOrDefault(m => string.Equals(m.Original, targetDir, StringComparison.OrdinalIgnoreCase))
-                    .Backup;
-
-                if (string.IsNullOrEmpty(baseFolder))
-                {
-                    baseFolder = moved.Count > 0 ? moved[0].Backup : null;
-                }
-
-                if (!string.IsNullOrEmpty(baseFolder) && Directory.Exists(baseFolder))
-                {
-                    OverlayDirectory(baseFolder!, targetDir);
-                }
-
-                OverlayDirectory(staging, targetDir);
-                TryDeleteDirectory(staging);
+                Directory.Move(staging, targetDir);
                 staging = null;
             }
             catch
             {
-                // 复制到一半失败：清掉可能只写了一半的目录，再还原旧版本
-                TryDeleteDirectory(targetDir);
+                // 改名失败时正式文件夹并没有被创建，直接还原旧版本即可
                 Restore(moved);
                 throw;
-            }
-
-            // 新包里没带 Settings.xml 就沿用旧版本的，避免更新后 mod 设置被重置
-            if (previousSettings is not null && !File.Exists(Path.Combine(targetDir, "Settings.xml")))
-            {
-                try
-                {
-                    File.WriteAllBytes(Path.Combine(targetDir, "Settings.xml"), previousSettings);
-                }
-                catch
-                {
-                    // 忽略
-                }
             }
 
             foreach (var (_, backup) in moved)
@@ -395,6 +441,7 @@ public sealed class ModService
     /// 如果上次安装正好在"移走旧版 → 放入新版"之间被强杀 / 断电，
     /// 那个备份就是这份 mod 唯一的副本，删掉等于把用户的 mod 弄丢了。
     /// 这种情况要把它按 Info.json 里的 Id 恢复回 Mods 下。
+    /// .aurora-recovered-*（没法确认完整、留给用户判断的目录）也不能删。
     /// </summary>
     private void CleanupTempFolders()
     {
@@ -410,7 +457,12 @@ public sealed class ModService
                     continue;
                 }
 
-                TryDeleteDirectory(dir);
+                // 只删明确可以丢弃的两种；不认识的前缀一律保留
+                if (name.StartsWith(TempFolderPrefix + "new-", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith(TempFolderPrefix + "del-", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteDirectory(dir);
+                }
             }
         }
         catch
@@ -446,15 +498,48 @@ public sealed class ModService
             }
 
             var target = Path.Combine(ModsPath, id!);
-            if (Directory.Exists(target))
+            if (!Directory.Exists(target))
             {
-                // 已经有正常版本了，这份备份没用了
+                Directory.Move(backupDir, target);
+                MarkComplete(target);
+                AppPaths.AppendDebugLog($"[install] 已恢复上次中断安装留下的旧版本：{id}");
+                return;
+            }
+
+            // 正式目录带完成标记 = 它是新流程一次改名就位的完整版本，备份确实没用了
+            if (File.Exists(Path.Combine(target, CompleteMarkerName)))
+            {
                 TryDeleteDirectory(backupDir);
                 return;
             }
 
-            Directory.Move(backupDir, target);
-            AppPaths.AppendDebugLog($"[install] 已恢复上次中断安装留下的旧版本：{id}");
+            // 正式目录没有完成标记：可能是 0.1.10～0.1.12.2 的覆盖安装中断后留下的半个目录
+            //（那几个版本是在正式目录里逐个复制文件的）。这时备份是唯一确定完整的副本，绝不能删：
+            // 把备份恢复到正式位置，没法确认完整的目录挪到 .aurora-recovered-* 留给用户自己判断。
+            var aside = Path.Combine(ModsPath, $"{TempFolderPrefix}recovered-{Guid.NewGuid():N}");
+            Directory.Move(target, aside);
+
+            try
+            {
+                Directory.Move(backupDir, target);
+            }
+            catch
+            {
+                // 备份挪不过去就把原目录放回去，两边都原样保留，下次扫描再试
+                Directory.Move(aside, target);
+                throw;
+            }
+
+            MarkComplete(target);
+
+            var note = $"「{info!.DisplayName ?? id}」上次更新没有完成，已恢复到更新前的版本 {info.Version}。"
+                       + $"中断时留下的文件夹已移到 Mods\\{Path.GetFileName(aside)}，确认没问题后可以删除；需要新版本请重新更新。";
+            AppPaths.AppendDebugLog($"[install] {note}");
+
+            lock (RecoveryNotes)
+            {
+                RecoveryNotes.Add(note);
+            }
         }
         catch
         {
@@ -462,12 +547,42 @@ public sealed class ModService
         }
     }
 
+    /// <summary>新流程装好的 mod 目录里的完成标记（见 InstallFromZip）。</summary>
+    private const string CompleteMarkerName = ".aurora-complete";
+
+    private static void MarkComplete(string folder)
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, CompleteMarkerName), string.Empty);
+        }
+        catch
+        {
+            // 标记写不进去只是下次还会按"没法确认完整"处理，不影响使用
+        }
+    }
+
+    /// <summary>扫描时自动恢复了中断的更新，要告诉用户（界面取走后清空）。</summary>
+    private static readonly List<string> RecoveryNotes = [];
+
+    /// <summary>取走并清空扫描期间产生的恢复说明（可能来自启动时的后台扫描）。</summary>
+    public static IReadOnlyList<string> TakeRecoveryNotes()
+    {
+        lock (RecoveryNotes)
+        {
+            var notes = RecoveryNotes.ToList();
+            RecoveryNotes.Clear();
+            return notes;
+        }
+    }
+
     /// <summary>
-    /// 把 source 里的文件覆盖复制到 target，**保留 target 里多出来的文件**。
+    /// 把 source 里的文件复制到 target，**保留 target 里多出来的文件**。
     /// 用来做"覆盖安装"：mod 常把自己的配置写在自己的文件夹里，
     /// 如果直接换成"只有新包内容"的目录，配置就一起没了。
+    /// overwriteExisting = false 时 target 里已有的文件保持不动（用于把旧版本补进新包）。
     /// </summary>
-    private static void OverlayDirectory(string source, string target)
+    private static void OverlayDirectory(string source, string target, bool overwriteExisting = true)
     {
         var sourceRoot = Path.GetFullPath(source) + Path.DirectorySeparatorChar;
         var targetRoot = Path.GetFullPath(target) + Path.DirectorySeparatorChar;
@@ -497,6 +612,12 @@ public sealed class ModService
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+            if (!overwriteExisting && File.Exists(destination))
+            {
+                continue;
+            }
+
             File.Copy(file, destination, overwrite: true);
         }
     }
@@ -603,12 +724,37 @@ public sealed class ModService
     /// <summary>
     /// 从 URL 下载 zip 并安装（progress 为 0-100）。
     /// cacheName 不为空时，安装成功后会把这个 zip 留在本地缓存里（离线可重装）。
+    /// expectedId 见 <see cref="InstallFromZip"/>。
     /// </summary>
     public async Task<InstallResult> InstallFromUrlAsync(
         string url,
         IProgress<int>? progress = null,
         CancellationToken ct = default,
-        string? cacheName = null)
+        string? cacheName = null,
+        string? expectedId = null)
+    {
+        // 下载阶段也要占住：否则两个安装可以同时下载，先下完的那个装到一半时另一个也开始装
+        if (!OperationGate.Wait(0))
+        {
+            return new InstallResult(false, BusyMessage);
+        }
+
+        try
+        {
+            return await InstallFromUrlCoreAsync(url, progress, ct, cacheName, expectedId);
+        }
+        finally
+        {
+            OperationGate.Release();
+        }
+    }
+
+    private async Task<InstallResult> InstallFromUrlCoreAsync(
+        string url,
+        IProgress<int>? progress,
+        CancellationToken ct,
+        string? cacheName,
+        string? expectedId)
     {
         using var criticalWork = CriticalWork.Begin("下载并安装 Mod");
 
@@ -645,7 +791,7 @@ public sealed class ModService
                 }
             }
 
-            var result = InstallFromZip(temp);
+            var result = InstallFromZipCore(temp, expectedId);
 
             if (result.Success && !string.IsNullOrWhiteSpace(cacheName))
             {
@@ -735,7 +881,9 @@ public sealed class ModService
         return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
 
-    public InstallResult Uninstall(InstalledMod mod)
+    public InstallResult Uninstall(InstalledMod mod) => RunExclusive(() => UninstallCore(mod));
+
+    private InstallResult UninstallCore(InstalledMod mod)
     {
         if (SteamGameLocator.IsGameRunning())
         {
@@ -766,7 +914,9 @@ public sealed class ModService
         }
     }
 
-    public InstallResult SetEnabled(InstalledMod mod, bool enabled)
+    public InstallResult SetEnabled(InstalledMod mod, bool enabled) => RunExclusive(() => SetEnabledCore(mod, enabled));
+
+    private InstallResult SetEnabledCore(InstalledMod mod, bool enabled)
     {
         // 游戏运行时 UMM 退出前会把自己内存里的启用状态写回 Params.xml，这里改了也会被覆盖
         if (SteamGameLocator.IsGameRunning())
@@ -778,8 +928,17 @@ public sealed class ModService
 
         try
         {
-            Params.SetEnabled(mod.Id, enabled);
-            return new InstallResult(true, enabled ? $"已启用 {mod.DisplayName}。" : $"已禁用 {mod.DisplayName}。", mod.Id);
+            var brokenBackup = Params.SetEnabled(mod.Id, enabled);
+            var message = enabled ? $"已启用 {mod.DisplayName}。" : $"已禁用 {mod.DisplayName}。";
+
+            if (brokenBackup is not null)
+            {
+                // 重建后其它 mod 在 UMM 里会按默认（启用）处理，UMM 自己的设置也回到默认
+                message += $"\n注意：原来的 Params.xml 已损坏，已备份为 {brokenBackup} 并重新生成；"
+                           + "其它 mod 的启用状态和 UMM 设置已恢复为默认。";
+            }
+
+            return new InstallResult(true, message, mod.Id);
         }
         catch (Exception ex)
         {

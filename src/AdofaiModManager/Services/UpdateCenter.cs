@@ -27,7 +27,17 @@ public sealed class UpdateCenter
 
     private DateTime _siteMapFailedTime = DateTime.MinValue;
 
-    public IReadOnlyDictionary<string, UpdateCheckResult> Results => _results;
+    /// <summary>当前结果的快照（拷贝一份，调用方遍历时不会和后台写入冲突）。</summary>
+    public IReadOnlyDictionary<string, UpdateCheckResult> Results
+    {
+        get
+        {
+            lock (_resultsLock)
+            {
+                return new Dictionary<string, UpdateCheckResult>(_results, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+    }
 
     /// <summary>资源站 mod 映射（键：UMM Id 或显示名）</summary>
     public IReadOnlyDictionary<string, SiteModMatch> SiteMap => _siteMap;
@@ -39,8 +49,13 @@ public sealed class UpdateCenter
     /// <summary>结果变化（检查完成 / 清除 / 站点映射刷新）时触发。</summary>
     public event Action? Changed;
 
-    public UpdateCheckResult? Get(string modId) =>
-        _results.TryGetValue(modId, out var result) ? result : null;
+    public UpdateCheckResult? Get(string modId)
+    {
+        lock (_resultsLock)
+        {
+            return _results.TryGetValue(modId, out var result) ? result : null;
+        }
+    }
 
     /// <summary>取某个已安装 mod 的检查结果（按文件夹区分，避免重复安装时互相覆盖）。</summary>
     public UpdateCheckResult? Get(InstalledMod mod) => Get(mod.UpdateKey);
@@ -298,7 +313,11 @@ public sealed class UpdateCenter
 
         var result = await CheckOneCoreAsync(mod, github, gitHubState, ct);
 
-        _results[mod.UpdateKey] = result;
+        lock (_resultsLock)
+        {
+            _results[mod.UpdateKey] = result;
+        }
+
         Recount();
         Changed?.Invoke();
         return result;
@@ -810,6 +829,11 @@ public sealed class UpdateCenter
         map[key] = match;
     }
 
-    private void Recount() =>
-        UpdatableCount = _results.Values.Count(r => r.Success && r.UpdateAvailable);
+    private void Recount()
+    {
+        lock (_resultsLock)
+        {
+            UpdatableCount = _results.Values.Count(r => r.Success && r.UpdateAvailable);
+        }
+    }
 }

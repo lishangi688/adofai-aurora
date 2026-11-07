@@ -59,8 +59,9 @@ public sealed class UpdateSourceStore
                 _overrides = new Dictionary<string, string>(loaded, StringComparer.OrdinalIgnoreCase);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            AppPaths.BackupBrokenFile(_path, ex);
             _overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }

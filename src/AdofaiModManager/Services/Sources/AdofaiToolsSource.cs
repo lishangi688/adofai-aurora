@@ -20,6 +20,12 @@ public sealed class AdofaiToolsSource(
 {
     public string Id => id;
 
+    /// <summary>
+    /// 缓存用的来源标识：自定义站点的 Id 固定是 "custom"，换了站点地址也不变，
+    /// 所以要带上接口地址，否则换站后会先显示上一个站点的缓存。
+    /// </summary>
+    public string CacheId => $"{id}|{client.ApiRoot}";
+
     public string DisplayName => displayName
         ?? (id == "adofaitools" ? "ADOFAITools" : "自定义站点");
 

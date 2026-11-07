@@ -53,8 +53,9 @@ public sealed class FavoritesStore
                 _items = JsonSerializer.Deserialize<List<FavoriteMod>>(File.ReadAllText(_path)) ?? [];
             }
         }
-        catch
+        catch (Exception ex)
         {
+            AppPaths.BackupBrokenFile(_path, ex);
             _items = [];
         }
     }

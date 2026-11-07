@@ -1,0 +1,31 @@
+# 构建 + 测试（Windows：程序是 WPF，测试也会用到 Windows 路径与文件锁行为）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 构建（Release）
+        run: dotnet build AdofaiModManager.slnx -c Release
+
+      - name: 单元 / 回归测试
+        run: dotnet test --project tests/Aurora.Tests -c Release --no-build
+
+      # 加载器冒烟测试：只在临时目录里操作，失败时退出码非 0
+      - name: LoaderSmokeTest
+        run: dotnet run --project tools/LoaderSmokeTest -c Release --no-build
