@@ -51,8 +51,9 @@ public sealed class InstallMapService
                 _map = new Dictionary<string, string>(loaded, StringComparer.OrdinalIgnoreCase);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            AppPaths.BackupBrokenFile(_path, ex);
             _map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }
