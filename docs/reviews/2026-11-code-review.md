@@ -1,38 +1,40 @@
 # 代码审查：v0.1.12.2（main @ `d7b0ca4`）
 
 > 审查时间：2026-11-08
-> 范围：`src/AdofaiModManager` 全部 C# 源码（服务层、来源适配器、页面），结合 README、`docs/releases/` 各版本更新日志、PR #1～#4 的讨论记录。
+> 范围：`src/AdofaiModManager` 全部 C# 源码（服务层、来源适配器、页面），结合 README、`docs/releases/` 各版本更新日志、PR #1～PR #4 的讨论记录。
+>
+> 说明：下文的问题编号统一写作 F1～F17，以免和 GitHub 上的 PR / Issue 编号（#1、#2 …）混淆。
 > 起因：0.1.12.1 被反馈「打开 Mod 文件夹」跳到「文档」，0.1.12.2 的修复没有找对原因，最后由 PR #4 修好。这说明有些问题光看现象很难定位，需要再系统地过一遍代码。
 
 本文档只记录问题和建议，**这个 PR 不改动任何程序代码**，修复会按优先级另外提交。
 
 ## 结论速览
 
-| # | 级别 | 问题 | 位置 |
+| 编号 | 级别 | 问题 | 位置 |
 |---|---|---|---|
-| 1 | 🔴 高 | 更新中断后，下次扫描会删掉旧版本的唯一备份（v0.1.10 的覆盖安装改动造成的回归） | `ModService.cs` |
-| 2 | 🔴 高 | 游戏目录里混用 `/` 和 `\` 的根源在 Steam 定位，PR #4 只修了 Explorer 这一处 | `SteamGameLocator.cs` |
-| 3 | 🔴 高 | Aurora 自更新和 UMM 内核都按名字模糊匹配资源站条目，而且下载后不做任何校验 | `AppUpdateService.cs` / `KernelBootstrapper.cs` |
-| 4 | 🟠 中 | 部署加载器时会覆盖 BepInEx 的 `winhttp.dll` / `doorstop_config.ini`，而且没有备份 | `LoaderService.cs` |
-| 5 | 🟠 中 | Markdown 的 `<scheme:...>` 自动链接没有限制协议，点击后会直接交给 ShellExecute | `MarkdownViewer.xaml.cs` |
-| 6 | 🟠 中 | 接口缓存的键不含站点地址，默认站点和自定义站点的列表、详情会串 | `AdofaiToolsClient.cs` |
-| 7 | 🟠 中 | 「更新」不校验装进来的 mod Id，名字匹配错时会装成另一个 mod | `InstalledModsPage.xaml.cs` / `ModService.cs` |
-| 8 | 🟠 中 | `Params.xml` 损坏时会被静默重建并覆盖，写入也不是原子的 | `UmmParamsService.cs` |
-| 9 | 🟠 中 | 部署内核时先复制文件、后检查注入组件，内核包不完整时会留下新旧混杂的加载器 | `LoaderService.cs` |
-| 10 | 🟡 低 | PR #4 合并时列的几条 follow-up 还没做 | `PathToExplorer.cs` 等 |
-| 11 | 🟡 低 | 收藏 / 安装映射 / 更新源文件损坏时会被静默清空 | `FavoritesStore.cs` 等 |
-| 12 | 🟡 低 | 同一分钟内导出两次诊断包，第二次必定失败 | `SettingsPage.xaml.cs` |
-| 13 | 🟡 低 | 安装流程没有全局互斥，目前只是碰巧被 UI 线程串行化 | 各页面 |
-| 14 | 🟡 低 | 远端数据里的 URL 会被当作本地路径尝试（`File.Exists(url)`） | `KernelService.cs` / `AppSelfUpdater.cs` |
-| 15 | 🟡 低 | 绿色版更新脚本忽略 robocopy 失败，照常启动新版本 | `AppSelfUpdater.cs` |
-| 16 | ⚪ 流程 | 没有 CI，PR #2 的安装测试工程因为 `.gitignore` 从来没进过仓库 | `.gitignore` |
-| 17 | ⚪ 文档 | 0.1.12.2 更新日志写的根因不准确；PR #4 的修复还没发版 | `docs/releases/v0.1.12.2.md` |
+| F1 | 🔴 高 | 更新中断后，下次扫描会删掉旧版本的唯一备份（v0.1.10 的覆盖安装改动造成的回归） | `ModService.cs` |
+| F2 | 🔴 高 | 游戏目录里混用 `/` 和 `\` 的根源在 Steam 定位，PR #4 只修了 Explorer 这一处 | `SteamGameLocator.cs` |
+| F3 | 🔴 高 | Aurora 自更新和 UMM 内核都按名字模糊匹配资源站条目，而且下载后不做任何校验 | `AppUpdateService.cs` / `KernelBootstrapper.cs` |
+| F4 | 🟠 中 | 部署加载器时会覆盖 BepInEx 的 `winhttp.dll` / `doorstop_config.ini`，而且没有备份 | `LoaderService.cs` |
+| F5 | 🟠 中 | Markdown 的 `<scheme:...>` 自动链接没有限制协议，点击后会直接交给 ShellExecute | `MarkdownViewer.xaml.cs` |
+| F6 | 🟠 中 | 接口缓存的键不含站点地址，默认站点和自定义站点的列表、详情会串 | `AdofaiToolsClient.cs` |
+| F7 | 🟠 中 | 「更新」不校验装进来的 mod Id，名字匹配错时会装成另一个 mod | `InstalledModsPage.xaml.cs` / `ModService.cs` |
+| F8 | 🟠 中 | `Params.xml` 损坏时会被静默重建并覆盖，写入也不是原子的 | `UmmParamsService.cs` |
+| F9 | 🟠 中 | 部署内核时先复制文件、后检查注入组件，内核包不完整时会留下新旧混杂的加载器 | `LoaderService.cs` |
+| F10 | 🟡 低 | PR #4 合并时列的几条 follow-up 还没做 | `PathToExplorer.cs` 等 |
+| F11 | 🟡 低 | 收藏 / 安装映射 / 更新源文件损坏时会被静默清空 | `FavoritesStore.cs` 等 |
+| F12 | 🟡 低 | 同一分钟内导出两次诊断包，第二次必定失败 | `SettingsPage.xaml.cs` |
+| F13 | 🟡 低 | 安装流程没有全局互斥，目前只是碰巧被 UI 线程串行化 | 各页面 |
+| F14 | 🟡 低 | 远端数据里的 URL 会被当作本地路径尝试（`File.Exists(url)`） | `KernelService.cs` / `AppSelfUpdater.cs` |
+| F15 | 🟡 低 | 绿色版更新脚本忽略 robocopy 失败，照常启动新版本 | `AppSelfUpdater.cs` |
+| F16 | ⚪ 流程 | 没有 CI，PR #2 的安装测试工程因为 `.gitignore` 从来没进过仓库 | `.gitignore` |
+| F17 | ⚪ 文档 | 0.1.12.2 更新日志写的根因不准确；PR #4 的修复还没发版 | `docs/releases/v0.1.12.2.md` |
 
-其中 #1、#2 已经用真实源码写了小程序复现（见下文），#12 也做了验证。其余各项是逐行阅读代码得出的结论。
+其中 F1、F2 已经用真实源码写了小程序复现（见下文），F12 也做了验证。其余各项是逐行阅读代码得出的结论。
 
 ---
 
-## 🔴 1. 更新中断后会删掉旧版本的唯一备份
+## 🔴 F1. 更新中断后会删掉旧版本的唯一备份
 
 **位置**：`Services/ModService.cs:222-251`（步骤 ③），`Services/ModService.cs:448-454`（`RecoverOldBackup`）
 
@@ -76,7 +78,7 @@ mods listed: 0                     ← mod 从列表里消失了
 
 ---
 
-## 🔴 2. 游戏目录混用分隔符的根源在 Steam 定位
+## 🔴 F2. 游戏目录混用分隔符的根源在 Steam 定位
 
 **位置**：`Services/SteamGameLocator.cs:336-344`、`294-297`；写入设置的位置有 `Services/AppServices.cs:139`、`Views/Dialogs/FirstRunWizard.xaml.cs:36-41`、`Views/Pages/SettingsPage.xaml.cs:212`
 
@@ -107,7 +109,7 @@ PR #4 在 `PathToExplorer` 里把 `/` 换成了 `\`，修好了 Explorer 这个�
 
 ---
 
-## 🔴 3. 自更新与内核下载：按名字模糊匹配，而且不做校验
+## 🔴 F3. 自更新与内核下载：按名字模糊匹配，而且不做校验
 
 **位置**：
 
@@ -134,7 +136,7 @@ PR #4 在 `PathToExplorer` 里把 `/` 换成了 `\`，修好了 Explorer 这个�
 
 ---
 
-## 🟠 4. 部署加载器会覆盖 BepInEx，而且没有备份
+## 🟠 F4. 部署加载器会覆盖 BepInEx，而且没有备份
 
 **位置**：`Services/LoaderService.cs:164-178`
 
@@ -155,7 +157,7 @@ BepInEx 本身就会同时放 `winhttp.dll` 和 `doorstop_config.ini`。所以�
 
 ---
 
-## 🟠 5. Markdown 自动链接没有限制协议
+## 🟠 F5. Markdown 自动链接没有限制协议
 
 **位置**：`Controls/MarkdownViewer.xaml.cs:432-438`、`491-502`
 
@@ -167,7 +169,7 @@ mod 简介和更新说明来自四个第三方站点以及任意自定义站点�
 
 ---
 
-## 🟠 6. 接口缓存不区分站点
+## 🟠 F6. 接口缓存不区分站点
 
 **位置**：`Services/AdofaiToolsClient.cs:182-183`、`231`；`Views/Pages/OnlineModsPage.xaml.cs:1304`
 
@@ -181,7 +183,7 @@ mod 简介和更新说明来自四个第三方站点以及任意自定义站点�
 
 ---
 
-## 🟠 7. 「更新」不校验装进来的是不是同一个 mod
+## 🟠 F7. 「更新」不校验装进来的是不是同一个 mod
 
 **位置**：`Views/Pages/InstalledModsPage.xaml.cs:558-604`、`Services/ModService.cs:123`
 
@@ -197,7 +199,7 @@ mod 简介和更新说明来自四个第三方站点以及任意自定义站点�
 
 ---
 
-## 🟠 8. `Params.xml` 损坏时会被静默重建
+## 🟠 F8. `Params.xml` 损坏时会被静默重建
 
 **位置**：`Services/UmmParamsService.cs:117-132`、`106`
 
@@ -207,7 +209,7 @@ mod 简介和更新说明来自四个第三方站点以及任意自定义站点�
 
 ---
 
-## 🟠 9. 部署内核：先复制文件，后检查组件
+## 🟠 F9. 部署内核：先复制文件，后检查组件
 
 **位置**：`Services/LoaderService.cs:128-162`
 
@@ -217,17 +219,17 @@ mod 简介和更新说明来自四个第三方站点以及任意自定义站点�
 
 ---
 
-## 🟡 10. PR #4 的 follow-up 还没做
+## 🟡 F10. PR #4 的 follow-up 还没做
 
 PR #4 合并时列了几条建议，main 上目前还没有对应的提交：
 
 - `PathToExplorer.sb` 是 `[ThreadStatic] public static readonly`：字段初始化器只在第一个访问它的线程上运行，换一个线程访问时会拿到 `null`。而且 `public` 字段谁都能改。改成方法内的局部 `StringBuilder` 就行。
 - 三处 `catch (InvalidPathException)`（`InstalledModsPage.xaml.cs:389`、`LoaderPage.xaml.cs:428`、`SettingsPage.xaml.cs` 导出诊断包处）都只写日志，用户点了按钮却没有任何反馈。
-- 保存 GamePath 时规范化分隔符，见 #2。
+- 保存 GamePath 时规范化分隔符，见 F2。
 
 ---
 
-## 🟡 11. 收藏 / 安装映射 / 更新源损坏时会被静默清空
+## 🟡 F11. 收藏 / 安装映射 / 更新源损坏时会被静默清空
 
 **位置**：`FavoritesStore.cs:56`、`InstallMapService.cs:54`、`UpdateSourceStore.cs:62`
 
@@ -235,7 +237,7 @@ PR #4 合并时列了几条建议，main 上目前还没有对应的提交：
 
 ---
 
-## 🟡 12. 同一分钟内导出两次诊断包会失败
+## 🟡 F12. 同一分钟内导出两次诊断包会失败
 
 **位置**：`Views/Pages/SettingsPage.xaml.cs:554`
 
@@ -243,7 +245,7 @@ PR #4 合并时列了几条建议，main 上目前还没有对应的提交：
 
 ---
 
-## 🟡 13. 安装流程没有全局互斥
+## 🟡 F13. 安装流程没有全局互斥
 
 - `InstalledModsPage` 的 `_busy` 只在本页面内有效；`OnlineModsPage.Install_Click` **完全不检查** `_busy`，而且切换详情时 `RenderSiteDetail` / `RenderRemoteDetail` 会重新启用安装按钮；`FavoritesPage` 也有自己独立的 `_busy`。
 - 所以多个安装可以同时进行。目前没有出问题，只是因为全项目都没有 `ConfigureAwait(false)`，下载完成后 `InstallFromZip` 会回到 UI 线程同步执行，**碰巧被串行化了**。
@@ -255,7 +257,7 @@ PR #4 合并时列了几条建议，main 上目前还没有对应的提交：
 
 ---
 
-## 🟡 14. 远端返回的 URL 会被当成本地路径尝试
+## 🟡 F14. 远端返回的 URL 会被当成本地路径尝试
 
 **位置**：`Services/KernelService.cs:231`、`Services/AppSelfUpdater.cs:69`、`476`
 
@@ -263,7 +265,7 @@ PR #4 合并时列了几条建议，main 上目前还没有对应的提交：
 
 ---
 
-## 🟡 15. 绿色版更新脚本忽略 robocopy 失败
+## 🟡 F15. 绿色版更新脚本忽略 robocopy 失败
 
 **位置**：`Services/AppSelfUpdater.cs:368-374`
 
@@ -271,19 +273,19 @@ robocopy 的退出码大于等于 8 表示复制失败（例如文件被杀毒�
 
 ---
 
-## ⚪ 16. 流程：没有 CI，也没有提交进仓库的测试
+## ⚪ F16. 流程：没有 CI，也没有提交进仓库的测试
 
 - 仓库里没有 `.github/workflows`，每次发版都靠本地构建。
-- PR #2 收尾时写的安装测试工程放在 `artifacts/install-test`，而 `.gitignore` 里有 `artifacts/`，所以它**从来没有进过仓库**。#1 这样的回归本来可以被它发现：只要加一个「复制到一半中断后扫描」的用例就行。
+- PR #2 收尾时写的安装测试工程放在 `artifacts/install-test`，而 `.gitignore` 里有 `artifacts/`，所以它**从来没有进过仓库**。F1 这样的回归本来可以被它发现：只要加一个「复制到一半中断后扫描」的用例就行。
 - `tools/` 下的几个 SmokeTest 都需要手动运行。
 
 **建议**：新建一个 `tests/` 测试工程，把安装相关的用例（恶意 Id、坏包、中断恢复、`Params.xml` 损坏等）放进去；加一个最简单的 GitHub Actions：`dotnet build` 加 `dotnet test`，在 Windows runner 上运行。
 
 ---
 
-## ⚪ 17. 文档
+## ⚪ F17. 文档
 
-- `docs/releases/v0.1.12.2.md` 把「跳到文档」的原因写成了「文件夹不存在」。实际原因是 PR #4 确认的**路径分隔符混用**，而这种路径的来源见 #2。建议在下一版更新日志里更正，并说明 0.1.12.2 的修复没有覆盖这种情况。
+- `docs/releases/v0.1.12.2.md` 把「跳到文档」的原因写成了「文件夹不存在」。实际原因是 PR #4 确认的**路径分隔符混用**，而这种路径的来源见 F2。建议在下一版更新日志里更正，并说明 0.1.12.2 的修复没有覆盖这种情况。
 - PR #4 的修复已经合进 main（`v0.1.12.2-2-gd7b0ca4`），但**还没有发版**，csproj 里的版本号也还是 0.1.12.2。
 - `AppUpdateService` 的类注释还写着「只做提示 + 打开下载页，不自动替换正在运行的程序」，和现在的实现不符。
 - README「开发」一节的打包示例还是 `-Version 0.1.6`。
@@ -292,7 +294,7 @@ robocopy 的退出码大于等于 8 表示复制失败（例如文件被杀毒�
 
 ## 建议的修复顺序
 
-1. **#1**（数据丢失）和 **#2**（PR #4 根因）：改动小、影响面大，建议合在一起，作为 0.1.12.3 发布；
-2. **#3**：至少先做「固定 slug + 限定站点」，这两条几行代码就能完成；哈希校验需要配合发版流程一起做；
-3. **#4 ~ #9**：各自独立，可以分几个小 PR；
-4. **#16**：建议在修 #1 的同时把测试工程和 CI 建起来，避免同样的回归再次发生。
+1. **F1**（数据丢失）和 **F2**（PR #4 根因）：改动小、影响面大，建议合在一起，作为 0.1.12.3 发布；
+2. **F3**：至少先做「固定 slug + 限定站点」，这两条几行代码就能完成；哈希校验需要配合发版流程一起做；
+3. **F4 ~ F9**：各自独立，可以分几个小 PR；
+4. **F16**：建议在修 F1 的同时把测试工程和 CI 建起来，避免同样的回归再次发生。
