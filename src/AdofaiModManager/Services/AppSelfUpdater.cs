@@ -373,12 +373,19 @@ public static class AppSelfUpdater
 
             var scriptPath = Path.Combine(Path.GetTempPath(), $"aurora-apply-{Guid.NewGuid():N}.cmd");
 
+            // 路径直接嵌进批处理：% 会被 cmd 当成变量展开，要写成 %%
+            static string Bat(string value) => value.Replace("%", "%%");
+
             // 注意：脚本只能写 ASCII。
             // .NET Core 默认不带 GBK(936) 等旧代码页，而且 cmd 对 UTF-8 中文也不友好，
             // 所以这里的提示/日志一律用英文，避免"编码不可用"这类意外。
+            //
+            // robocopy 退出码 ≥ 8 表示有文件没复制成功（例如被杀毒软件占用）。这时不能照常启动 ——
+            // 程序目录里是新旧混杂的文件。改为保留解压出来的新版本，打开它和日志，让用户手动覆盖。
+            // /R:3 /W:2：robocopy 默认对占用的文件重试 100 万次、每次等 30 秒，等于卡死。
             var script = $"""
                 @echo off
-                set "LOG={log}"
+                set "LOG={Bat(log)}"
                 echo [%date% %time%] waiting for the app to exit... >> "%LOG%"
 
                 :wait
@@ -388,18 +395,29 @@ public static class AppSelfUpdater
                     goto wait
                 )
 
-                echo [%date% %time%] copying new version into "{target}" >> "%LOG%"
-                robocopy "{payloadDir}" "{target}" /E /IS /IT /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
-                echo [%date% %time%] robocopy exit code %errorlevel% >> "%LOG%"
+                echo [%date% %time%] copying new version into "{Bat(target)}" >> "%LOG%"
+                robocopy "{Bat(payloadDir)}" "{Bat(target)}" /E /IS /IT /R:3 /W:2 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
+                set RC=%errorlevel%
+                echo [%date% %time%] robocopy exit code %RC% >> "%LOG%"
+                if %RC% GEQ 8 goto failed
 
-                if /i not "{currentExe}"=="{newExe}" del "{target}\{currentExe}" 2>nul
+                if /i not "{Bat(currentExe)}"=="{Bat(newExe)}" del "{Bat(target)}\{Bat(currentExe)}" 2>nul
 
                 echo [%date% %time%] starting the app... >> "%LOG%"
-                start "" "{newExePath}"
+                start "" "{Bat(newExePath)}"
 
-                rmdir /s /q "{payloadDir}" 2>nul
-                rmdir /s /q "{workRoot}" 2>nul
+                rmdir /s /q "{Bat(payloadDir)}" 2>nul
+                rmdir /s /q "{Bat(workRoot)}" 2>nul
                 del "%~f0" 2>nul
+                exit /b 0
+
+                :failed
+                echo [%date% %time%] UPDATE FAILED: some files could not be replaced. >> "%LOG%"
+                echo Please copy everything in the opened folder "{Bat(payloadDir)}" into "{Bat(target)}" manually, then start Aurora. >> "%LOG%"
+                start "" notepad "%LOG%"
+                start "" explorer "{Bat(payloadDir)}"
+                del "%~f0" 2>nul
+                exit /b 1
                 """;
 
             // 关键：cmd.exe 是按"系统 OEM 代码页"读取批处理文件的。
@@ -408,11 +426,27 @@ public static class AppSelfUpdater
             // 而 .NET Core 默认不带 936 等旧代码页，需要先注册提供程序。
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var encoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+            // 代码页表示不了的字符（例如中文系统上的日文路径）默认会被换成 "?"，脚本就会复制到错误的位置：
+            // 改成遇到就报错，宁可不自动更新
+            var encoding = Encoding.GetEncoding(
+                CultureInfo.CurrentCulture.TextInfo.OEMCodePage,
+                EncoderFallback.ExceptionFallback,
+                DecoderFallback.ExceptionFallback);
 
             // 另外：cmd 对换行很挑，必须是 CRLF（C# 源文件里是 LF）。
             var normalized = script.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            File.WriteAllText(scriptPath, normalized, encoding);
+
+            try
+            {
+                File.WriteAllText(scriptPath, normalized, encoding);
+            }
+            catch (EncoderFallbackException)
+            {
+                TryDeleteFile(scriptPath);
+                return new SelfUpdateResult(
+                    false,
+                    "程序所在目录或临时目录的路径里有当前系统编码无法表示的字符，无法自动替换文件。请到发布页手动下载更新。");
+            }
 
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"")
             {
@@ -441,6 +475,18 @@ public static class AppSelfUpdater
         catch
         {
             // 删不掉就在原目录上重试
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // 忽略
         }
     }
 
