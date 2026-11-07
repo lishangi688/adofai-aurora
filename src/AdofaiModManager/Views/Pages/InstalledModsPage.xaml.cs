@@ -384,10 +384,11 @@ public partial class InstalledModsPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{mod.FolderPath}\"")
-            {
-                UseShellExecute = true,
-            });
+            PathToExplorer.Open(mod.FolderPath);
+        }
+        catch (InvalidPathException)
+        {
+            AppPaths.AppendDebugLog($"[open] 无效路径: {mod.FolderPath}");
         }
         catch (Exception ex)
         {

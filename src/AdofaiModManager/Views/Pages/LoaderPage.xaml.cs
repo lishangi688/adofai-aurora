@@ -1,9 +1,10 @@
+using AdofaiModManager.Models;
+using AdofaiModManager.Services;
+using AdofaiModManager.Views.Dialogs;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using AdofaiModManager.Services;
-using AdofaiModManager.Views.Dialogs;
 using Wpf.Ui.Controls;
 
 namespace AdofaiModManager.Views.Pages;
@@ -422,10 +423,11 @@ public partial class LoaderPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{loader.GamePath}\"")
-            {
-                UseShellExecute = true,
-            });
+            PathToExplorer.Open(loader.GamePath);
+        }
+        catch (InvalidPathException)
+        {
+            AppPaths.AppendDebugLog($"[open] 无效路径: {loader.GamePath}");
         }
         catch (Exception ex)
         {

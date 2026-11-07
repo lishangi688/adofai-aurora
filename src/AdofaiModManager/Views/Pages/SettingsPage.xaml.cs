@@ -1,12 +1,14 @@
+using AdofaiModManager.Models;
+using AdofaiModManager.Services;
+using AdofaiModManager.Services.Sources;
+using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using AdofaiModManager.Services;
-using AdofaiModManager.Services.Sources;
-using Microsoft.Win32;
+using System.Windows.Documents;
 
 namespace AdofaiModManager.Views.Pages;
 
@@ -610,10 +612,11 @@ public partial class SettingsPage : Page
 
             try
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
-                {
-                    UseShellExecute = true,
-                });
+                PathToExplorer.Select(path);
+            }
+            catch (InvalidPathException)
+            {
+                AppPaths.AppendDebugLog($"[open] 无效路径: {path}");
             }
             catch
             {
