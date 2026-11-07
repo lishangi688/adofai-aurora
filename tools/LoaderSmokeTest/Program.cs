@@ -96,7 +96,7 @@ var release = new KernelRelease
     Notes = "冒烟测试用内核",
 };
 
-var (downloaded, message) = await kernel.DownloadAsync(release);
+var (downloaded, message) = await kernel.DownloadAsync(release, allowLocalFile: true);
 Console.WriteLine($"    {message}");
 Check("下载成功", downloaded is not null);
 Check("解压出 UnityModManager.dll", downloaded is not null && File.Exists(Path.Combine(downloaded.Directory, "UnityModManager.dll")));
@@ -104,7 +104,7 @@ Check("解压出 UnityModManager.dll", downloaded is not null && File.Exists(Pat
 Console.WriteLine("== 9. sha256 不匹配应被拒绝 ==");
 var badZip = Path.Combine(root, "kernel-bad.zip");
 File.Copy(zipPath, badZip, true);
-var (bad, badMessage) = await kernel.DownloadAsync(new KernelRelease { Version = "0.0.0", DownloadUrl = badZip, Sha256 = "DEADBEEF" });
+var (bad, badMessage) = await kernel.DownloadAsync(new KernelRelease { Version = "0.0.0", DownloadUrl = badZip, Sha256 = "DEADBEEF" }, allowLocalFile: true);
 Console.WriteLine($"    {badMessage}");
 Check("被拒绝", bad is null);
 
