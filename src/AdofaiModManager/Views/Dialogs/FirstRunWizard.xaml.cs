@@ -110,7 +110,7 @@ public partial class FirstRunWizard : FluentWindow
 
     private void GamePathBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        AppServices.Settings.Settings.GamePath = GamePathBox.Text.Trim();
+        AppServices.Settings.Settings.GamePath = SteamGameLocator.NormalizePath(GamePathBox.Text);
         AppServices.Settings.Save();
         UpdateGameStatus();
     }

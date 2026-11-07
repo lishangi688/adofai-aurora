@@ -117,8 +117,13 @@ public sealed class ModService
     ///
     /// 流程刻意做成"先准备好新版本，再替换旧版本"：
     ///  ① 整包解压到 Mods 下的临时文件夹（包坏了 / 磁盘满了，旧版本毫发无损）；
-    ///  ② 把旧版本文件夹整个改名挪开（文件被占用时这一步就会失败 → 原样还原，不会删出半个 mod）；
-    ///  ③ 新版本改名成正式文件夹，最后才删掉旧版本。
+    ///  ② 在临时文件夹里把旧版本的内容补进来（新包里有的文件以新包为准），合并成完整的新版本；
+    ///  ③ 把旧版本文件夹整个改名挪开（文件被占用时这一步就会失败 → 原样还原，不会删出半个 mod）；
+    ///  ④ 临时文件夹**一次改名**成正式文件夹，最后才删掉旧版本。
+    ///
+    /// ⚠ 正式文件夹只能靠④这一次改名出现：CleanupTempFolders 认为"正式文件夹存在 = 它是完整的"，
+    /// 据此删除旧版本备份。如果在正式文件夹里逐个复制文件，中途被强杀时就会留下半个 mod，
+    /// 而唯一完整的旧版本备份会在下次扫描时被删掉。
     /// </summary>
     public InstallResult InstallFromZip(string zipPath)
     {
@@ -193,10 +198,27 @@ public sealed class ModService
                 oldFolders.Add(targetDir);
             }
 
-            // 顺手把旧版本的设置（Settings.xml）留下来，更新后写回去，避免每次更新丢设置
-            var previousSettings = TryReadPreviousSettings(oldFolders);
+            // ② 覆盖安装：在临时文件夹里把旧版本的内容补进来。
+            //    mod 常把自己的配置（各种 json / 子文件夹）写在自己的文件夹里，
+            //    所以保留旧目录的全部内容，只用新包里带的文件覆盖。
+            //    多份重复文件夹时，优先用"名字正好等于 Id"的那份作为基础。
+            var baseFolder = oldFolders.FirstOrDefault(f =>
+                                 string.Equals(f, targetDir, StringComparison.OrdinalIgnoreCase))
+                             ?? oldFolders.FirstOrDefault();
 
-            // ② 旧版本整个挪开（失败就还原，保证不会出现"删了一半"）
+            if (baseFolder is not null && Directory.Exists(baseFolder))
+            {
+                OverlayDirectory(baseFolder, staging, overwriteExisting: false);
+            }
+
+            // 新包和基础文件夹里都没有 Settings.xml 时，沿用其它重复文件夹里的那份，避免更新后 mod 设置被重置
+            var stagedSettings = Path.Combine(staging, "Settings.xml");
+            if (!File.Exists(stagedSettings) && TryReadPreviousSettings(oldFolders) is { } previousSettings)
+            {
+                File.WriteAllBytes(stagedSettings, previousSettings);
+            }
+
+            // ③ 旧版本整个挪开（失败就还原，保证不会出现"删了一半"）
             var moved = new List<(string Original, string Backup)>();
             foreach (var folder in oldFolders)
             {
@@ -215,52 +237,17 @@ public sealed class ModService
                 }
             }
 
-            // ③ 覆盖安装：先把旧版本的内容放回去，再用新包覆盖。
-            //    以前是"挪走旧目录 → 把新包改名就位"，旧目录里 mod 自己写进去的
-            //    配置（各种 json / 子文件夹）会一起消失，只保住了 Settings.xml。
-            //    现在保留旧目录的全部内容，只覆盖新包里带的文件。
+            // ④ 合并好的新版本一次改名就位（同一个文件夹内改名是原子的）
             try
             {
-                Directory.CreateDirectory(targetDir);
-
-                // 多份重复文件夹时，优先用"名字正好等于 Id"的那份作为基础
-                var baseFolder = moved
-                    .FirstOrDefault(m => string.Equals(m.Original, targetDir, StringComparison.OrdinalIgnoreCase))
-                    .Backup;
-
-                if (string.IsNullOrEmpty(baseFolder))
-                {
-                    baseFolder = moved.Count > 0 ? moved[0].Backup : null;
-                }
-
-                if (!string.IsNullOrEmpty(baseFolder) && Directory.Exists(baseFolder))
-                {
-                    OverlayDirectory(baseFolder!, targetDir);
-                }
-
-                OverlayDirectory(staging, targetDir);
-                TryDeleteDirectory(staging);
+                Directory.Move(staging, targetDir);
                 staging = null;
             }
             catch
             {
-                // 复制到一半失败：清掉可能只写了一半的目录，再还原旧版本
-                TryDeleteDirectory(targetDir);
+                // 改名失败时正式文件夹并没有被创建，直接还原旧版本即可
                 Restore(moved);
                 throw;
-            }
-
-            // 新包里没带 Settings.xml 就沿用旧版本的，避免更新后 mod 设置被重置
-            if (previousSettings is not null && !File.Exists(Path.Combine(targetDir, "Settings.xml")))
-            {
-                try
-                {
-                    File.WriteAllBytes(Path.Combine(targetDir, "Settings.xml"), previousSettings);
-                }
-                catch
-                {
-                    // 忽略
-                }
             }
 
             foreach (var (_, backup) in moved)
@@ -448,7 +435,8 @@ public sealed class ModService
             var target = Path.Combine(ModsPath, id!);
             if (Directory.Exists(target))
             {
-                // 已经有正常版本了，这份备份没用了
+                // 已经有正常版本了，这份备份没用了。
+                // 能这样判断的前提：正式文件夹只会由 InstallFromZip 的"一次改名"产生，存在就一定是完整的
                 TryDeleteDirectory(backupDir);
                 return;
             }
@@ -463,11 +451,12 @@ public sealed class ModService
     }
 
     /// <summary>
-    /// 把 source 里的文件覆盖复制到 target，**保留 target 里多出来的文件**。
+    /// 把 source 里的文件复制到 target，**保留 target 里多出来的文件**。
     /// 用来做"覆盖安装"：mod 常把自己的配置写在自己的文件夹里，
     /// 如果直接换成"只有新包内容"的目录，配置就一起没了。
+    /// overwriteExisting = false 时 target 里已有的文件保持不动（用于把旧版本补进新包）。
     /// </summary>
-    private static void OverlayDirectory(string source, string target)
+    private static void OverlayDirectory(string source, string target, bool overwriteExisting = true)
     {
         var sourceRoot = Path.GetFullPath(source) + Path.DirectorySeparatorChar;
         var targetRoot = Path.GetFullPath(target) + Path.DirectorySeparatorChar;
@@ -497,6 +486,12 @@ public sealed class ModService
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+            if (!overwriteExisting && File.Exists(destination))
+            {
+                continue;
+            }
+
             File.Copy(file, destination, overwrite: true);
         }
     }

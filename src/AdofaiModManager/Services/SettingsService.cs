@@ -56,6 +56,13 @@ public sealed class SettingsService
             AppPaths.AppendDebugLog($"[settings] 配置文件损坏，已备份为 settings.json.broken 并使用默认配置：{ex.Message}");
         }
 
+        // 旧版本可能存过 "c:/program files (x86)/steam\steamapps\..." 这种混合写法的游戏目录
+        //（来自 Steam 注册表），读进来时顺手纠正，下次保存就写回规范写法
+        if (!string.IsNullOrWhiteSpace(Settings.GamePath))
+        {
+            Settings.GamePath = SteamGameLocator.NormalizePath(Settings.GamePath);
+        }
+
         // 诊断日志开关跟设置走（默认开）
         AppPaths.DiagnosticLogEnabled = Settings.DiagnosticLogging;
     }

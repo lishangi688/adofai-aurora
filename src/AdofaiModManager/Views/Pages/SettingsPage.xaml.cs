@@ -209,7 +209,7 @@ public partial class SettingsPage : Page
             return;
         }
 
-        AppServices.Settings.Settings.GamePath = GamePathBox.Text.Trim();
+        AppServices.Settings.Settings.GamePath = SteamGameLocator.NormalizePath(GamePathBox.Text);
         AppServices.Settings.Save();
         UpdateGameStatus();
         UpdateGameVersionStatus();
