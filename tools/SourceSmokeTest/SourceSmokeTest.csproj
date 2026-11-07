@@ -14,6 +14,7 @@
     <Compile Include="Program.cs" />
     <!-- 只编「与界面无关」的源适配器本体，保证测的就是真正要用的代码。
          注意：这里不要用 Sources\*.cs 通配 —— 那个目录里还有依赖 WPF 的文件。 -->
+    <Compile Include="..\..\src\AdofaiModManager\Services\AppPaths.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\Sources\RemoteModels.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\Sources\TufSource.cs" />
     <Compile Include="..\..\src\AdofaiModManager\Services\Sources\ModlistSource.cs" />
