@@ -6,4 +6,7 @@
     <Project Path="tools/LoaderSmokeTest/LoaderSmokeTest.csproj" />
     <Project Path="tools/UpdateSmokeTest/UpdateSmokeTest.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Aurora.Tests/Aurora.Tests.csproj" />
+  </Folder>
 </Solution>
