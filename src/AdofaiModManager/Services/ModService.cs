@@ -149,9 +149,9 @@ public sealed class ModService
     ///  ③ 把旧版本文件夹整个改名挪开（文件被占用时这一步就会失败 → 原样还原，不会删出半个 mod）；
     ///  ④ 临时文件夹**一次改名**成正式文件夹，最后才删掉旧版本。
     ///
-    /// ⚠ 正式文件夹只能靠④这一次改名出现：CleanupTempFolders 认为"正式文件夹存在 = 它是完整的"，
-    /// 据此删除旧版本备份。如果在正式文件夹里逐个复制文件，中途被强杀时就会留下半个 mod，
-    /// 而唯一完整的旧版本备份会在下次扫描时被删掉。
+    /// ⚠ 正式文件夹只能靠④这一次改名出现，改名前在暂存目录里写入完成标记（.aurora-complete）。
+    /// CleanupTempFolders 只有看到正式文件夹带着这个标记，才会删除旧版本备份；
+    /// 没有标记的（例如 0.1.10～0.1.12.2 在正式目录里逐个复制、中途被强杀留下的半个目录）一律按"不确定完整"处理。
     ///
     /// expectedId：从「已安装」页更新某个 mod 时传入它的 Id。更新来源是按名字匹配的，
     /// 匹配错了会下到另一个 mod；包里的 Id 对不上就拒绝，不能装成别的东西。
@@ -259,6 +259,10 @@ public sealed class ModService
             {
                 File.WriteAllBytes(stagedSettings, previousSettings);
             }
+
+            // 完成标记：合并全部完成后才写，随整个目录一起改名就位。
+            // CleanupTempFolders 只在正式目录带着这个标记时才删旧版本备份（见 RecoverOldBackup）
+            File.WriteAllText(Path.Combine(staging, CompleteMarkerName), string.Empty);
 
             // ③ 旧版本整个挪开（失败就还原，保证不会出现"删了一半"）
             var moved = new List<(string Original, string Backup)>();
@@ -424,6 +428,7 @@ public sealed class ModService
     /// 如果上次安装正好在"移走旧版 → 放入新版"之间被强杀 / 断电，
     /// 那个备份就是这份 mod 唯一的副本，删掉等于把用户的 mod 弄丢了。
     /// 这种情况要把它按 Info.json 里的 Id 恢复回 Mods 下。
+    /// .aurora-recovered-*（没法确认完整、留给用户判断的目录）也不能删。
     /// </summary>
     private void CleanupTempFolders()
     {
@@ -439,7 +444,12 @@ public sealed class ModService
                     continue;
                 }
 
-                TryDeleteDirectory(dir);
+                // 只删明确可以丢弃的两种；不认识的前缀一律保留
+                if (name.StartsWith(TempFolderPrefix + "new-", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith(TempFolderPrefix + "del-", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteDirectory(dir);
+                }
             }
         }
         catch
@@ -475,20 +485,81 @@ public sealed class ModService
             }
 
             var target = Path.Combine(ModsPath, id!);
-            if (Directory.Exists(target))
+            if (!Directory.Exists(target))
             {
-                // 已经有正常版本了，这份备份没用了。
-                // 能这样判断的前提：正式文件夹只会由 InstallFromZip 的"一次改名"产生，存在就一定是完整的
+                Directory.Move(backupDir, target);
+                MarkComplete(target);
+                AppPaths.AppendDebugLog($"[install] 已恢复上次中断安装留下的旧版本：{id}");
+                return;
+            }
+
+            // 正式目录带完成标记 = 它是新流程一次改名就位的完整版本，备份确实没用了
+            if (File.Exists(Path.Combine(target, CompleteMarkerName)))
+            {
                 TryDeleteDirectory(backupDir);
                 return;
             }
 
-            Directory.Move(backupDir, target);
-            AppPaths.AppendDebugLog($"[install] 已恢复上次中断安装留下的旧版本：{id}");
+            // 正式目录没有完成标记：可能是 0.1.10～0.1.12.2 的覆盖安装中断后留下的半个目录
+            //（那几个版本是在正式目录里逐个复制文件的）。这时备份是唯一确定完整的副本，绝不能删：
+            // 把备份恢复到正式位置，没法确认完整的目录挪到 .aurora-recovered-* 留给用户自己判断。
+            var aside = Path.Combine(ModsPath, $"{TempFolderPrefix}recovered-{Guid.NewGuid():N}");
+            Directory.Move(target, aside);
+
+            try
+            {
+                Directory.Move(backupDir, target);
+            }
+            catch
+            {
+                // 备份挪不过去就把原目录放回去，两边都原样保留，下次扫描再试
+                Directory.Move(aside, target);
+                throw;
+            }
+
+            MarkComplete(target);
+
+            var note = $"「{info!.DisplayName ?? id}」上次更新没有完成，已恢复到更新前的版本 {info.Version}。"
+                       + $"中断时留下的文件夹已移到 Mods\\{Path.GetFileName(aside)}，确认没问题后可以删除；需要新版本请重新更新。";
+            AppPaths.AppendDebugLog($"[install] {note}");
+
+            lock (RecoveryNotes)
+            {
+                RecoveryNotes.Add(note);
+            }
         }
         catch
         {
             // 恢复不了就留着，别删
+        }
+    }
+
+    /// <summary>新流程装好的 mod 目录里的完成标记（见 InstallFromZip）。</summary>
+    private const string CompleteMarkerName = ".aurora-complete";
+
+    private static void MarkComplete(string folder)
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, CompleteMarkerName), string.Empty);
+        }
+        catch
+        {
+            // 标记写不进去只是下次还会按"没法确认完整"处理，不影响使用
+        }
+    }
+
+    /// <summary>扫描时自动恢复了中断的更新，要告诉用户（界面取走后清空）。</summary>
+    private static readonly List<string> RecoveryNotes = [];
+
+    /// <summary>取走并清空扫描期间产生的恢复说明（可能来自启动时的后台扫描）。</summary>
+    public static IReadOnlyList<string> TakeRecoveryNotes()
+    {
+        lock (RecoveryNotes)
+        {
+            var notes = RecoveryNotes.ToList();
+            RecoveryNotes.Clear();
+            return notes;
         }
     }
 

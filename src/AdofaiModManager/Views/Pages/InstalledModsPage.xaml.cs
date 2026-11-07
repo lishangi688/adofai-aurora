@@ -188,6 +188,16 @@ public partial class InstalledModsPage : Page
             StatusBar.IsOpen = true;
         }
 
+        // 扫描时自动恢复了上次没完成的更新（也可能发生在启动时的后台检查里）：必须让用户知道
+        var recovered = ModService.TakeRecoveryNotes();
+        if (recovered.Count > 0)
+        {
+            StatusBar.Severity = InfoBarSeverity.Warning;
+            StatusBar.Title = "已恢复中断的更新";
+            StatusBar.Message = string.Join("\n", recovered);
+            StatusBar.IsOpen = true;
+        }
+
         if (AppPaths.DebugLogEnabled)
         {
             Dispatcher.BeginInvoke(
