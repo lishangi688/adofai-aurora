@@ -124,8 +124,11 @@ public sealed class ModService
     /// ⚠ 正式文件夹只能靠④这一次改名出现：CleanupTempFolders 认为"正式文件夹存在 = 它是完整的"，
     /// 据此删除旧版本备份。如果在正式文件夹里逐个复制文件，中途被强杀时就会留下半个 mod，
     /// 而唯一完整的旧版本备份会在下次扫描时被删掉。
+    ///
+    /// expectedId：从「已安装」页更新某个 mod 时传入它的 Id。更新来源是按名字匹配的，
+    /// 匹配错了会下到另一个 mod；包里的 Id 对不上就拒绝，不能装成别的东西。
     /// </summary>
-    public InstallResult InstallFromZip(string zipPath)
+    public InstallResult InstallFromZip(string zipPath, string? expectedId = null)
     {
         if (!File.Exists(zipPath))
         {
@@ -173,6 +176,14 @@ public sealed class ModService
                 if (!IsSafeFolderName(info.Id))
                 {
                     return new InstallResult(false, $"Info.json 里的 Id「{info.Id}」不能用作文件夹名，已拒绝安装。");
+                }
+
+                if (expectedId is not null && !string.Equals(info.Id, expectedId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new InstallResult(
+                        false,
+                        $"下载到的是「{info.DisplayName ?? info.Id}」（Id：{info.Id}），不是要更新的「{expectedId}」，已取消安装。"
+                        + "这通常是更新来源匹配错了，可以点「绑定 GitHub」手动指定更新源。");
                 }
 
                 var infoPath = Normalize(infoEntry.FullName);
@@ -598,12 +609,14 @@ public sealed class ModService
     /// <summary>
     /// 从 URL 下载 zip 并安装（progress 为 0-100）。
     /// cacheName 不为空时，安装成功后会把这个 zip 留在本地缓存里（离线可重装）。
+    /// expectedId 见 <see cref="InstallFromZip"/>。
     /// </summary>
     public async Task<InstallResult> InstallFromUrlAsync(
         string url,
         IProgress<int>? progress = null,
         CancellationToken ct = default,
-        string? cacheName = null)
+        string? cacheName = null,
+        string? expectedId = null)
     {
         using var criticalWork = CriticalWork.Begin("下载并安装 Mod");
 
@@ -640,7 +653,7 @@ public sealed class ModService
                 }
             }
 
-            var result = InstallFromZip(temp);
+            var result = InstallFromZip(temp, expectedId);
 
             if (result.Success && !string.IsNullOrWhiteSpace(cacheName))
             {

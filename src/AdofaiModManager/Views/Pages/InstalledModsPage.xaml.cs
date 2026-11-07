@@ -473,11 +473,12 @@ public partial class InstalledModsPage : Page
         return AppServices.CreateApiClient();
     }
 
-    /// <summary>按资源站信息安装（返回 null 表示没有配置站点 / 没有 slug）。</summary>
+    /// <summary>按资源站信息安装（返回 null 表示没有配置站点 / 没有 slug）。expectedId：被更新 mod 的 Id。</summary>
     private static async Task<InstallResult?> InstallFromSiteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        string expectedId)
     {
         var client = BuildSiteClient();
         if (client is null || string.IsNullOrWhiteSpace(result.SiteSlug))
@@ -486,14 +487,15 @@ public partial class InstalledModsPage : Page
         }
 
         var detail = await client.GetModDetailAsync(result.SiteResourceType ?? "MOD", result.SiteSlug!);
-        return await new SiteInstaller(client, service).InstallAsync(detail, progress);
+        return await new SiteInstaller(client, service).InstallAsync(detail, progress, expectedId: expectedId);
     }
 
-    /// <summary>按第三方源（TUF / modlist）的信息安装更新（返回 null 表示解析不到）。</summary>
+    /// <summary>按第三方源（TUF / modlist）的信息安装更新（返回 null 表示解析不到）。expectedId：被更新 mod 的 Id。</summary>
     private static async Task<InstallResult?> InstallFromRemoteAsync(
         ModService service,
         UpdateCheckResult result,
-        IProgress<int>? progress)
+        IProgress<int>? progress,
+        string expectedId)
     {
         var source = RemoteSources.ById(result.RemoteSourceId);
         if (source is null || string.IsNullOrWhiteSpace(result.RemoteSlug))
@@ -516,7 +518,7 @@ public partial class InstalledModsPage : Page
             return null;
         }
 
-        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress);
+        return await new RemoteInstaller(source, service).InstallAsync(detail.Mod, version, progress, expectedId: expectedId);
     }
 
     private async void Update_Click(object sender, RoutedEventArgs e)
@@ -558,7 +560,7 @@ public partial class InstalledModsPage : Page
             if (!string.IsNullOrWhiteSpace(result.RemoteSourceId))
             {
                 // 更新来自第三方源（TUF / modlist）：解析下载地址 → 校验 → 安装
-                var fromRemote = await InstallFromRemoteAsync(service, result, progress);
+                var fromRemote = await InstallFromRemoteAsync(service, result, progress, mod.Id);
                 if (fromRemote is null)
                 {
                     Report(false, $"该更新来自 {result.SourceLabel}，但没能解析出可用的下载地址。");
@@ -573,12 +575,12 @@ public partial class InstalledModsPage : Page
                     ? null
                     : $"{mod.Id}-{result.RemoteVersion}";
 
-                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName);
+                install = await service.InstallFromUrlAsync(result.DownloadUrl, progress, default, cacheName, mod.Id);
 
                 // GitHub 下载失败（代理挂了 / 被墙）→ 自动改用资源站那一版，别让用户卡住
                 if (!install.Success && result.HasSiteFallback)
                 {
-                    var fallback = await InstallFromSiteAsync(service, result, progress);
+                    var fallback = await InstallFromSiteAsync(service, result, progress, mod.Id);
                     if (fallback is not null)
                     {
                         install = fallback;
@@ -588,7 +590,7 @@ public partial class InstalledModsPage : Page
             }
             else if (result.HasSiteFallback)
             {
-                var fromSite = await InstallFromSiteAsync(service, result, progress);
+                var fromSite = await InstallFromSiteAsync(service, result, progress, mod.Id);
                 if (fromSite is null)
                 {
                     Report(false, $"该更新来自 {AppServices.SiteDisplayName}，但未配置 API key。");

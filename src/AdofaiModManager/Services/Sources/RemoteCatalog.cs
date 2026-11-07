@@ -232,11 +232,13 @@ public static class RemoteCatalog
 /// </summary>
 public sealed class RemoteInstaller(IRemoteSource source, ModService modService)
 {
+    /// <param name="expectedId">更新已安装 mod 时传入它的 Id：第三方源是按名字匹配的，包里的 Id 对不上就拒绝</param>
     public async Task<InstallResult> InstallAsync(
         RemoteMod mod,
         RemoteVersion version,
         IProgress<int>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? expectedId = null)
     {
         if (mod.Loader == ModLoader.MelonLoader)
         {
@@ -289,6 +291,6 @@ public sealed class RemoteInstaller(IRemoteSource source, ModService modService)
 
         // 走源自己的下载地址（保留它们的下载计数），ModService 会下载 + 解压 + 安装
         var cacheName = $"{source.Id}-{mod.Slug}-{version.VersionId}";
-        return await modService.InstallFromUrlAsync(download.Url, progress, ct, cacheName);
+        return await modService.InstallFromUrlAsync(download.Url, progress, ct, cacheName, expectedId);
     }
 }
