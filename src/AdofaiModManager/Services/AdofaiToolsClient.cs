@@ -64,9 +64,10 @@ public sealed class AdofaiToolsClient
     {
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        // 列表变化较快：缓存 10 分钟，减少重复请求
+        // 列表变化较快：缓存 10 分钟，减少重复请求。
+        // 键里要带站点地址：默认站点和自定义站点用的是同一个客户端类，不带的话两边的缓存会互相覆盖
         var cacheKey = ApiCache.Key(
-            "mods", page.ToString(), pageSize.ToString(), search, resourceType, loader, sort, featured?.ToString());
+            "mods", _apiRoot, page.ToString(), pageSize.ToString(), search, resourceType, loader, sort, featured?.ToString());
 
         if (ApiCache.TryGet<ModListPage>(cacheKey, ListCacheTtl, out var cached) && cached is not null)
         {
@@ -113,8 +114,9 @@ public sealed class AdofaiToolsClient
     {
         var url = $"/mods/{Uri.EscapeDataString(resourceType)}/{Uri.EscapeDataString(slug)}";
 
-        // 详情含版本/文件列表，直接决定"装哪一版"，所以缓存时间短一些
-        var cacheKey = ApiCache.Key("detail", resourceType, slug);
+        // 详情含版本/文件列表，直接决定"装哪一版"，所以缓存时间短一些；
+        // 文件 Id 只在本站有效，键里必须带站点地址
+        var cacheKey = ApiCache.Key("detail", _apiRoot, resourceType, slug);
 
         if (ApiCache.TryGet<ModDetail>(cacheKey, DetailCacheTtl, out var cached) && cached is not null)
         {

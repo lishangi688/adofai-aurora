@@ -958,11 +958,15 @@ public partial class OnlineModsPage : Page
         }
     }
 
+    /// <summary>缓存键里的来源标识（自定义站点要带上站点地址，见 AdofaiToolsSource.CacheId）。</summary>
+    private static string CacheIdOf(IRemoteSource source) =>
+        source is AdofaiToolsSource site ? site.CacheId : source.Id;
+
     /// <summary>远程列表某一页的缓存键（来源 + 查询条件 + 页码）。</summary>
     private static string RemotePageCacheKey(IRemoteSource source, RemoteModQuery query, string filterKey) =>
         ApiCache.Key(
             "remotepage",
-            source.Id,
+            CacheIdOf(source),
             query.Page.ToString(),
             query.PageSize.ToString(),
             query.Search,
@@ -1045,7 +1049,7 @@ public partial class OnlineModsPage : Page
 
     private async Task LoadRemoteDetailAsync(IRemoteSource source, ModListItem item, int requestId)
     {
-        var cacheKey = ApiCache.Key("remotedetail", source.Id, item.Slug);
+        var cacheKey = ApiCache.Key("remotedetail", CacheIdOf(source), item.Slug);
         var fromCache = ApiCache.TryGetStale<RemoteModDetail>(cacheKey, out var cachedDetail) && cachedDetail is not null;
         AppPaths.AppendDebugLog($"[remote] {source.Id} 详情 {item.Slug} 缓存={(fromCache ? "命中" : "未命中")}");
 
@@ -1298,7 +1302,7 @@ public partial class OnlineModsPage : Page
 
         try
         {
-            var detailCacheKey = ApiCache.Key("sitedetail", item.ResourceType ?? "MOD", item.Slug);
+            var detailCacheKey = ApiCache.Key("sitedetail", client.ApiRoot, item.ResourceType ?? "MOD", item.Slug);
             var hasCache = ApiCache.TryGetStale<ModDetail>(detailCacheKey, out var cachedDetail) && cachedDetail is not null;
 
             // ① 有缓存就直接铺出来（点一下马上有内容），再后台刷新
