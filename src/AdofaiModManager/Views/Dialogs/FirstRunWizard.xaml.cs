@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -537,7 +536,7 @@ public partial class FirstRunWizard : FluentWindow
 
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            ExternalLinks.Open(url);
         }
         catch
         {

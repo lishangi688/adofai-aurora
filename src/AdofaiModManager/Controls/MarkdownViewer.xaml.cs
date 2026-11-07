@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -409,10 +408,7 @@ public partial class MarkdownViewer : UserControl
                     }
 
                     var hyperlink = new Hyperlink();
-                    if (Uri.TryCreate(link.Url, UriKind.Absolute, out var uri) &&
-                        (uri.Scheme == Uri.UriSchemeHttp ||
-                         uri.Scheme == Uri.UriSchemeHttps ||
-                         uri.Scheme == Uri.UriSchemeMailto))
+                    if (Uri.TryCreate(link.Url, UriKind.Absolute, out var uri) && ExternalLinks.IsAllowed(uri))
                     {
                         hyperlink.NavigateUri = uri;
                         hyperlink.RequestNavigate += OnRequestNavigate;
@@ -432,7 +428,9 @@ public partial class MarkdownViewer : UserControl
                 case AutolinkInline autoLink:
                 {
                     var hyperlink = new Hyperlink { Foreground = LinkBrush };
-                    if (Uri.TryCreate(autoLink.Url, UriKind.Absolute, out var uri))
+
+                    // <scheme:...> 形式的自动链接可以是任意协议（file:、search-ms: …），和普通链接一样只放行网页 / 邮件
+                    if (Uri.TryCreate(autoLink.Url, UriKind.Absolute, out var uri) && ExternalLinks.IsAllowed(uri))
                     {
                         hyperlink.NavigateUri = uri;
                         hyperlink.RequestNavigate += OnRequestNavigate;
@@ -494,7 +492,8 @@ public partial class MarkdownViewer : UserControl
         e.Handled = true;
         try
         {
-            Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+            // 再统一检查一次协议：不依赖每种 Inline 各自过滤
+            ExternalLinks.Open(e.Uri.AbsoluteUri);
         }
         catch
         {

@@ -649,10 +649,7 @@ public partial class OnlineModsPage : Page
 
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
-            {
-                UseShellExecute = true,
-            });
+            ExternalLinks.Open(url);
         }
         catch
         {

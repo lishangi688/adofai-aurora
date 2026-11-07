@@ -102,10 +102,7 @@ public partial class SettingsPage : Page
 
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
-            {
-                UseShellExecute = true,
-            });
+            ExternalLinks.Open(url);
         }
         catch
         {
@@ -350,7 +347,7 @@ public partial class SettingsPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            ExternalLinks.Open(url);
         }
         catch (Exception ex)
         {
@@ -698,7 +695,7 @@ public partial class SettingsPage : Page
 
         try
         {
-            Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            ExternalLinks.Open(target);
             AppUpdateStatusText.Text = $"已打开下载页，请下载 v{info.Version}。";
         }
         catch (Exception ex)
