@@ -12,7 +12,7 @@
 ; ============================================================
 
 #ifndef AppVersion
-  #define AppVersion "0.1.13"
+  #define AppVersion "0.1.13.1"
 #endif
 
 #define AppName "Aurora"

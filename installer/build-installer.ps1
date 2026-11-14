@@ -16,7 +16,7 @@
 #   dist\SHA256SUMS.txt                上面三个文件的 SHA256（需要 -Installer；发版时上传到 GitHub Release）
 
 param(
-    [string]$Version = "0.1.13",
+    [string]$Version = "0.1.13.1",
     [switch]$Installer
 )
 
