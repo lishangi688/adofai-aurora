@@ -295,8 +295,14 @@ public partial class InstalledModsPage : Page
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => Reload();
 
-    private void InstallZip_Click(object sender, RoutedEventArgs e)
+    private async void InstallZip_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy)
+        {
+            Report(false, "另一个操作正在进行，请完成后再试。");
+            return;
+        }
+
         var service = CreateService();
         if (service is null)
         {
@@ -315,9 +321,39 @@ public partial class InstalledModsPage : Page
             return;
         }
 
-        var result = service.InstallFromZip(dialog.FileName);
-        Report(result.Success, result.Message);
-        Reload();
+        // 安装可能要处理很大的旧 Mod 目录（硬链接通常很快，但不要阻塞 UI 线程）
+        _busy = true;
+        var button = sender as FrameworkElement;
+        if (button is not null)
+        {
+            button.IsEnabled = false;
+        }
+
+        StatusBar.Severity = InfoBarSeverity.Informational;
+        StatusBar.Title = "正在安装";
+        StatusBar.Message = $"{Path.GetFileName(dialog.FileName)}";
+        StatusBar.IsOpen = true;
+
+        try
+        {
+            var result = await Task.Run(() => service.InstallFromZip(dialog.FileName));
+            Report(result.Success, result.Message);
+        }
+        catch (Exception ex)
+        {
+            AppPaths.AppendDebugLog($"[install] 本地 zip 安装失败：{ex}");
+            Report(false, $"安装失败：{ex.Message}");
+        }
+        finally
+        {
+            _busy = false;
+            if (button is not null)
+            {
+                button.IsEnabled = true;
+            }
+
+            Reload();
+        }
     }
 
     private void Uninstall_Click(object sender, RoutedEventArgs e)

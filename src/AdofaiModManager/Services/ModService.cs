@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using AdofaiModManager.Models;
 
@@ -263,7 +264,9 @@ public sealed class ModService
 
             if (baseFolder is not null && Directory.Exists(baseFolder))
             {
-                OverlayDirectory(baseFolder, staging, overwriteExisting: false);
+                // 旧目录可能有几十 GB 的 Workspace / 渲染缓存：硬链接进暂存目录，避免整份复制。
+                // 只有文件系统不支持硬链接时才退回复制。
+                OverlayDirectory(baseFolder, staging, overwriteExisting: false, preferHardLinks: true);
             }
 
             // 新包和基础文件夹里都没有 Settings.xml 时，沿用其它重复文件夹里的那份，避免更新后 mod 设置被重置
@@ -581,8 +584,14 @@ public sealed class ModService
     /// 用来做"覆盖安装"：mod 常把自己的配置写在自己的文件夹里，
     /// 如果直接换成"只有新包内容"的目录，配置就一起没了。
     /// overwriteExisting = false 时 target 里已有的文件保持不动（用于把旧版本补进新包）。
+    /// preferHardLinks：旧目录可能有几十 GB 的 Workspace / 渲染缓存，优先硬链接而不是复制；
+    /// 硬链接失败（不同卷 / 文件系统不支持）时才退回 File.Copy。
     /// </summary>
-    private static void OverlayDirectory(string source, string target, bool overwriteExisting = true)
+    private static void OverlayDirectory(
+        string source,
+        string target,
+        bool overwriteExisting = true,
+        bool preferHardLinks = false)
     {
         var sourceRoot = Path.GetFullPath(source) + Path.DirectorySeparatorChar;
         var targetRoot = Path.GetFullPath(target) + Path.DirectorySeparatorChar;
@@ -618,7 +627,36 @@ public sealed class ModService
                 continue;
             }
 
+            if (preferHardLinks && !File.Exists(destination) && TryCreateHardLink(destination, file))
+            {
+                continue;
+            }
+
+            // 硬链接失败时退回复制；只对很大的文件记一条日志，避免日志刷屏
+            if (preferHardLinks && new FileInfo(file).Length >= 64L * 1024 * 1024)
+            {
+                AppPaths.AppendDebugLog($"[install] 硬链接失败，改为复制大文件：{file}");
+            }
+
             File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateHardLink(
+        string lpFileName,
+        string lpExistingFileName,
+        IntPtr lpSecurityAttributes);
+
+    private static bool TryCreateHardLink(string linkPath, string existingPath)
+    {
+        try
+        {
+            return CreateHardLink(linkPath, existingPath, IntPtr.Zero);
+        }
+        catch
+        {
+            return false;
         }
     }
 

@@ -1,4 +1,6 @@
 using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 namespace AdofaiModManager.Tests;
@@ -107,4 +109,60 @@ public sealed class ModInstallTests
 
         Assert.True(game.Mods().InstallFromZip(game.MakeZip("Foo", "2.0"), expectedId: "foo").Success);
     }
+
+    /// <summary>
+    /// 旧目录里可能有几十 GB 的 Workspace / 渲染缓存。更新时必须保留它，
+    /// 但不应该把整份文件复制到暂存目录——用文件 ID 验证它确实是硬链接。
+    /// </summary>
+    [Fact]
+    public void Update_LargeOldFile_PreservedWithoutCopying()
+    {
+        using var game = new TestGame();
+        var oldFolder = game.AddMod("Foo", "Foo", "1.0", ("Foo.dll", "old"));
+        var bigFile = Path.Combine(oldFolder, "Workspace", "render.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(bigFile)!);
+        using (var stream = new FileStream(bigFile, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            stream.SetLength(8L * 1024 * 1024);
+        }
+
+        var before = FileIdentity(bigFile);
+
+        var result = game.Mods().InstallFromZip(game.MakeZip("Foo", "2.0", ("Foo.dll", "new")));
+
+        Assert.True(result.Success, result.Message);
+        var afterFile = Path.Combine(game.ModsPath, "Foo", "Workspace", "render.bin");
+        Assert.True(File.Exists(afterFile));
+        Assert.Equal(before, FileIdentity(afterFile));
+        Assert.Equal("new", game.Read("Foo", "Foo.dll"));
+    }
+
+    private static string FileIdentity(string path)
+    {
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (!GetFileInformationByHandle(handle, out var info))
+        {
+            throw new IOException($"GetFileInformationByHandle failed: {Marshal.GetLastWin32Error()}");
+        }
+
+        return $"{info.VolumeSerialNumber}:{info.FileIndexHigh}:{info.FileIndexLow}";
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleFileInformation information);
 }
