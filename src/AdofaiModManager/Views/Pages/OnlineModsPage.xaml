@@ -284,7 +284,35 @@
                                       Margin="8,0,0,0"
                                       DisplayMemberPath="VersionId"
                                       MaxDropDownHeight="320"
-                                      ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                      SelectionChanged="VersionCombo_SelectionChanged" />
+                        </Grid>
+
+                        <Grid x:Name="FileRow" Margin="0,8,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Opacity="0.75"
+                                       Text="文件" />
+                            <ComboBox x:Name="FileCombo"
+                                      Grid.Column="1"
+                                      Margin="8,0,0,0"
+                                      MaxDropDownHeight="320"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                            <Run Text="  (" />
+                                            <Run Text="{Binding SizeLabel, Mode=OneWay}" />
+                                            <Run Text=")" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
                         </Grid>
 
                         <StackPanel Margin="0,12,0,0" Orientation="Horizontal">

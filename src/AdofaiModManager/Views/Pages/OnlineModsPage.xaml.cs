@@ -1400,7 +1400,9 @@ public partial class OnlineModsPage : Page
         }
 
         var selected = VersionCombo.SelectedItem as ModVersion;
-        var file = PreferredFileOf(selected) ?? _detail.PreferredFile;
+        var file = FileCombo.SelectedItem as ModVersionFile
+                   ?? PreferredFileOf(selected)
+                   ?? (selected is null ? _detail.PreferredFile : null);
         if (file is null)
         {
             Report(false, "该 mod 没有可下载的文件。");
@@ -1519,6 +1521,25 @@ public partial class OnlineModsPage : Page
 
         VersionCombo.ItemsSource = ordered;
         VersionCombo.SelectedIndex = ordered.Count > 0 ? 0 : -1;
+        PopulateFiles(VersionCombo.SelectedItem as ModVersion);
+    }
+
+    private void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        PopulateFiles(VersionCombo.SelectedItem as ModVersion);
+    }
+
+    /// <summary>
+    /// 同一版本可能提供多个文件（例如 x64 / x86、不同加载器或不同游戏版本）。
+    /// 只有一个文件时隐藏选择器；有多个时让用户自己选，默认仍优先 UMM。
+    /// </summary>
+    private void PopulateFiles(ModVersion? version)
+    {
+        var files = version?.Files ?? [];
+        FileCombo.ItemsSource = files;
+        FileCombo.SelectedItem = PreferredFileOf(version);
+        FileCombo.IsEnabled = files.Count > 1;
+        FileRow.Visibility = files.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>取某个版本里优先安装的文件（优先 unitymodmanager，其次第一个）。</summary>
