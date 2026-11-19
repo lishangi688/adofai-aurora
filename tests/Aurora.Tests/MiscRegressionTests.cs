@@ -1,6 +1,7 @@
 using System.IO;
 using System.Xml.Linq;
 using AdofaiModManager.Services;
+using AdofaiModManager.Views.Dialogs;
 using Xunit;
 
 namespace AdofaiModManager.Tests;
@@ -99,3 +100,21 @@ public sealed class ExternalLinksTests
     public void Open_BlockedScheme_Throws() =>
         Assert.Throws<InvalidOperationException>(() => ExternalLinks.Open("search-ms:query=x"));
 }
+
+    /// <summary>多文件更新：去掉版本号后，AETC 基础包 / 完整包在下一版本仍能匹配。</summary>
+    public sealed class ModFileVariantTests
+    {
+        [Fact]
+        public void VariantKey_KeepsFullSuffixAcrossVersions()
+        {
+            var oldKey = ModFileChoiceDialog.VariantKey("AETC-1.1.1-Full.zip", "1.1.1");
+            var newKey = ModFileChoiceDialog.VariantKey("AETC-1.1.2-Full.zip", "1.1.2");
+
+            Assert.Equal(oldKey, newKey, StringComparer.OrdinalIgnoreCase);
+            Assert.Contains("Full", newKey, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void VariantKey_DoesNotChangeNamesWithoutVersion() =>
+            Assert.Equal("AETC-Full.zip", ModFileChoiceDialog.VariantKey("AETC-Full.zip", null));
+    }

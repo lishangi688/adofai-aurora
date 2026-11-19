@@ -70,4 +70,11 @@ public sealed class AppSettings
     /// 至少会保留一个来源可用。
     /// </summary>
     public List<string> DisabledSources { get; set; } = [];
+
+    /// <summary>
+    /// 用户更新某个 mod 时选择过的文件变体（mod Id → 去掉版本号后的文件名）。
+    /// 下次同一 mod 有新版本时，如果文件列表里还能匹配到这个变体，就默认选中它，
+    /// 避免 AETC 这类「基础包 / 完整包」每次更新都要重新选。
+    /// </summary>
+    public Dictionary<string, string> ModFileChoices { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

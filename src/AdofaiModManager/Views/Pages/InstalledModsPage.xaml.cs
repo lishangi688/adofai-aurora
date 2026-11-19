@@ -521,7 +521,7 @@ public partial class InstalledModsPage : Page
     }
 
     /// <summary>按资源站信息安装（返回 null 表示没有配置站点 / 没有 slug）。expectedId：被更新 mod 的 Id。</summary>
-    private static async Task<InstallResult?> InstallFromSiteAsync(
+    private async Task<InstallResult?> InstallFromSiteAsync(
         ModService service,
         UpdateCheckResult result,
         IProgress<int>? progress,
@@ -534,7 +534,56 @@ public partial class InstalledModsPage : Page
         }
 
         var detail = await client.GetModDetailAsync(result.SiteResourceType ?? "MOD", result.SiteSlug!);
-        return await new SiteInstaller(client, service).InstallAsync(detail, progress, expectedId: expectedId);
+
+        var version = detail.Versions.FirstOrDefault(v =>
+                          string.Equals(v.VersionId, result.RemoteVersion, StringComparison.OrdinalIgnoreCase))
+                      ?? detail.Versions.FirstOrDefault();
+
+        var files = version?.Files ?? [];
+        if (files.Count == 0)
+        {
+            // 旧数据 / 没有版本文件列表：沿用原来的默认文件
+            var fallback = detail.PreferredFile;
+            return fallback is null
+                ? new InstallResult(false, "该 mod 没有可下载的文件。")
+                : await new SiteInstaller(client, service)
+                    .InstallAsync(detail, fallback, version?.VersionId, progress, expectedId: expectedId);
+        }
+
+        var settings = AppServices.Settings.Settings;
+        settings.ModFileChoices ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        settings.ModFileChoices.TryGetValue(expectedId, out var preferredKey);
+
+        ModVersionFile? file;
+        if (files.Count == 1)
+        {
+            file = files[0];
+        }
+        else
+        {
+            var dialog = new ModFileChoiceDialog(
+                modName: expectedId,
+                version: version?.VersionId,
+                files: files,
+                preferredKey: preferredKey)
+            {
+                Owner = Window.GetWindow(this),
+            };
+
+            if (dialog.ShowDialog() != true || dialog.Selected is null)
+            {
+                return new InstallResult(false, "已取消更新。");
+            }
+
+            file = dialog.Selected;
+        }
+
+        // 记住这次选择（去掉版本号的文件名），下次同名变体默认选中
+        settings.ModFileChoices[expectedId] = ModFileChoiceDialog.VariantKey(file.Name, version?.VersionId);
+        AppServices.Settings.Save();
+
+        return await new SiteInstaller(client, service)
+            .InstallAsync(detail, file, version?.VersionId, progress, expectedId: expectedId);
     }
 
     /// <summary>按第三方源（TUF / modlist）的信息安装更新（返回 null 表示解析不到）。expectedId：被更新 mod 的 Id。</summary>

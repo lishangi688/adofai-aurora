@@ -32,7 +32,9 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
             return new InstallResult(false, "该 mod 没有可下载的文件。");
         }
 
-        var cacheName = string.IsNullOrWhiteSpace(versionId) ? null : $"{detail.Slug}-{versionId}";
+        var cacheName = string.IsNullOrWhiteSpace(versionId)
+            ? null
+            : $"{detail.Slug}-{versionId}-{file.Id}";
 
         // 1) 本地已有这一版的包 → 直接装（不联网）
         if (cacheName is not null && ModService.GetCachedZip(cacheName) is { } cachedZip)
