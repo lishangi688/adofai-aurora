@@ -348,7 +348,8 @@ public static class AppUpdateService
                 .OrderByDescending(v => v.VersionId!, Comparer<string>.Create(KernelService.CompareVersions))
                 .FirstOrDefault();
 
-            if (newest?.PrimaryFile is { } file && !string.IsNullOrWhiteSpace(file.Id))
+            var selectedFile = SelectSiteFile(newest, Distribution);
+            if (selectedFile is { } file && !string.IsNullOrWhiteSpace(file.Id))
             {
                 sha256 = file.Sha256;
                 try
@@ -366,13 +367,15 @@ public static class AppUpdateService
                 }
             }
 
+            var isCombined = selectedFile?.Name?.Contains("-all", StringComparison.OrdinalIgnoreCase) == true;
+
             return new AppUpdateInfo(
                 version,
                 AppServices.SiteDisplayName,
                 baseUrl,
                 DownloadUrl: downloadUrl,
                 FileName: fileName,
-                IsCombinedPackage: true,
+                IsCombinedPackage: isCombined,
                 Sha256: sha256);
         }
         catch
@@ -475,6 +478,46 @@ public static class AppUpdateService
             .Where(v => !string.IsNullOrWhiteSpace(v.VersionId))
             .OrderByDescending(v => v.VersionId!, Comparer<string>.Create(KernelService.CompareVersions))
             .FirstOrDefault()?.VersionId;
+
+    /// <summary>
+    /// 从工具版本的文件列表里，按当前安装形态选一个：
+    /// 安装版优先 Setup.exe，绿色版优先普通 zip，合并包作为兼容回退。
+    /// 资源站没有文件角色字段，只能按文件名判断；发布时文件名必须保持稳定。
+    /// </summary>
+    private static ToolVersionFile? SelectSiteFile(ToolVersion? version, AppDistribution distribution)
+    {
+        if (version is null)
+        {
+            return null;
+        }
+
+        var files = version.Files.Count > 0
+            ? version.Files
+            : version.File is null ? [] : [version.File];
+
+        if (files.Count == 0)
+        {
+            return null;
+        }
+
+        static bool IsInstaller(ToolVersionFile file) =>
+            file.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true
+            || file.Name?.Contains("setup", StringComparison.OrdinalIgnoreCase) == true;
+
+        static bool IsCombined(ToolVersionFile file) =>
+            file.Name?.Contains("-all", StringComparison.OrdinalIgnoreCase) == true;
+
+        if (distribution == AppDistribution.Installed)
+        {
+            return files.FirstOrDefault(IsInstaller)
+                   ?? files.FirstOrDefault(IsCombined)
+                   ?? files[0];
+        }
+
+        return files.FirstOrDefault(f => !IsInstaller(f) && !IsCombined(f))
+               ?? files.FirstOrDefault(IsCombined)
+               ?? files[0];
+    }
 
     private static string FormatVersion(Version? version)
     {
