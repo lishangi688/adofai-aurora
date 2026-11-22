@@ -86,7 +86,24 @@ public static class AppSelfUpdater
                 progress?.Report($"正在下载 v{info.Version} …　0%");
                 await DownloadAsync(url, packagePath, progress, info.Version, ct);
 
-                // 用 GitHub Release 里的 SHA256SUMS.txt 核对：资源站下载的包也能核对
+                // 资源站文件自带 SHA256：先按站点公布的哈希核对
+                var siteHashVerified = false;
+                if (!string.IsNullOrWhiteSpace(info.Sha256))
+                {
+                    progress?.Report("正在校验下载的文件…");
+                    var actual = ComputeSha256(packagePath);
+                    if (!string.Equals(actual, info.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        TryDeleteDirectory(workRoot);
+                        return new SelfUpdateResult(
+                            false,
+                            "校验失败：下载的文件与 ADOFAI Tools 公布的 SHA256 不一致，已中止更新（文件可能被篡改或下载不完整）。请到发布页手动下载。");
+                    }
+
+                    siteHashVerified = true;
+                }
+
+                // 再用 GitHub Release 里的 SHA256SUMS.txt 做独立核对
                 progress?.Report("正在校验下载的文件…");
                 switch (await VerifyChecksumAsync(packagePath, info.Version, ct))
                 {
@@ -97,7 +114,9 @@ public static class AppSelfUpdater
                             $"校验失败：下载的文件与 GitHub 发布页公布的 SHA256 不一致，已中止更新（文件可能被篡改或下载不完整）。请到发布页手动下载。");
 
                     case ChecksumResult.Unavailable:
-                        verifyNote = "（未能从 GitHub 获取校验文件，本次未做哈希校验）";
+                        verifyNote = siteHashVerified
+                            ? "（已按 ADOFAI Tools 公布的 SHA256 校验）"
+                            : "（未能从 GitHub 获取校验文件，本次未做哈希校验）";
                         break;
                 }
             }
@@ -583,6 +602,13 @@ public static class AppSelfUpdater
 
         /// <summary>拿不到校验文件（GitHub 连不上 / 旧版本没有发布校验文件）</summary>
         Unavailable,
+    }
+
+    /// <summary>计算文件的 SHA256（大写十六进制，和 ATL / SHA256SUMS 的写法一致）。</summary>
+    private static string ComputeSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
     }
 
     /// <summary>

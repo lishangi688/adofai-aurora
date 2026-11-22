@@ -39,7 +39,11 @@ public sealed class KernelBootstrapper(LoaderService loader)
                 {
                     progress?.Report($"ADOFAITools 有更新的内核 {site.Value.VersionId}，正在下载…");
                     var intent = await client.CreateToolDownloadIntentAsync(site.Value.FileId, ct);
-                    var (imported, message) = await Kernel.ImportAsync(intent.Url, site.Value.VersionId, ct);
+                    var (imported, message) = await Kernel.ImportAsync(
+                        intent.Url,
+                        site.Value.VersionId,
+                        ct,
+                        sha256: site.Value.Sha256);
 
                     return imported is not null
                         ? Kernel.Deploy(imported)
@@ -74,7 +78,11 @@ public sealed class KernelBootstrapper(LoaderService loader)
 
         progress?.Report($"正在下载 ADOFAITools 内核 {site.Value.VersionId}…");
         var intent = await client.CreateToolDownloadIntentAsync(site.Value.FileId, ct);
-        var (imported, message) = await Kernel.ImportAsync(intent.Url, site.Value.VersionId, ct);
+        var (imported, message) = await Kernel.ImportAsync(
+            intent.Url,
+            site.Value.VersionId,
+            ct,
+            sha256: site.Value.Sha256);
 
         return imported is not null ? Kernel.Deploy(imported) : new InstallResult(false, message);
     }
@@ -98,7 +106,7 @@ public sealed class KernelBootstrapper(LoaderService loader)
     public const string SiteKernelSlug = "tool-1717b65f";
 
     /// <summary>从资源站「工具库」取 UnityModManager 的最新版本与文件。</summary>
-    public static async Task<(string VersionId, string FileId)?> FindLatestSiteKernelAsync(
+    public static async Task<(string VersionId, string FileId, string? Sha256)?> FindLatestSiteKernelAsync(
         AdofaiToolsClient client,
         CancellationToken ct = default)
     {
@@ -131,8 +139,9 @@ public sealed class KernelBootstrapper(LoaderService loader)
                 Comparer<string>.Create((a, b) => KernelService.CompareVersions(a, b)))
             .FirstOrDefault();
 
-        return version?.File is null || string.IsNullOrWhiteSpace(version.VersionId)
+        var file = version?.PrimaryFile;
+        return file is null || string.IsNullOrWhiteSpace(version!.VersionId)
             ? null
-            : (version.VersionId, version.File.Id);
+            : (version.VersionId, file.Id, file.Sha256);
     }
 }

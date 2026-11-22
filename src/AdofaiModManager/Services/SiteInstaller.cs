@@ -1,3 +1,4 @@
+using System.IO;
 using AdofaiModManager.Models;
 
 namespace AdofaiModManager.Services;
@@ -36,20 +37,41 @@ public sealed class SiteInstaller(AdofaiToolsClient client, ModService modServic
             ? null
             : $"{detail.Slug}-{versionId}-{file.Id}";
 
-        // 1) 本地已有这一版的包 → 直接装（不联网）
+        // 1) 本地已有这一版的包 → 先核对站点哈希（旧缓存可能来自别的文件），再直接装
         if (cacheName is not null && ModService.GetCachedZip(cacheName) is { } cachedZip)
         {
-            var fromCache = modService.InstallFromZip(cachedZip, expectedId);
-            if (fromCache.Success)
+            var cacheHashOk = string.IsNullOrWhiteSpace(file.Sha256)
+                              || string.Equals(
+                                  ModService.ComputeSha256(cachedZip),
+                                  file.Sha256.Trim(),
+                                  StringComparison.OrdinalIgnoreCase);
+
+            if (cacheHashOk)
             {
-                RememberSource(detail, fromCache);
-                return fromCache;
+                var fromCache = modService.InstallFromZip(cachedZip, expectedId);
+                if (fromCache.Success)
+                {
+                    RememberSource(detail, fromCache);
+                    return fromCache;
+                }
+            }
+            else
+            {
+                // 缓存不是当前文件，删掉重新下载，避免拿基础包去装完整包
+                try { File.Delete(cachedZip); } catch { /* 下次缓存清理会处理 */ }
+                AppPaths.AppendDebugLog($"[install] 站点缓存哈希不一致，已丢弃：{Path.GetFileName(cachedZip)}");
             }
         }
 
         // 2) 下载并安装（成功后会把包留在缓存里）
         var intent = await client.CreateDownloadIntentAsync(file.Id, ct);
-        var result = await modService.InstallFromUrlAsync(intent.Url, progress, ct, cacheName, expectedId);
+        var result = await modService.InstallFromUrlAsync(
+            intent.Url,
+            progress,
+            ct,
+            cacheName,
+            expectedId,
+            file.Sha256);
 
         RememberSource(detail, result);
         return result;

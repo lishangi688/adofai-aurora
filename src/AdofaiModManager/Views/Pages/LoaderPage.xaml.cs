@@ -226,7 +226,7 @@ public partial class LoaderPage : Page
             // 资源站上的内核归站长维护，不一定会跟着软件一起更新；
             // 所以这里同时比较「站点版本」和「内置版本」，取更高的那个。
             // 没有 API key / 站点连不上时，也能只靠内置内核给出判断。
-            (string VersionId, string FileId)? site = null;
+            (string VersionId, string FileId, string? Sha256)? site = null;
             if (client is not null)
             {
                 try
@@ -287,7 +287,10 @@ public partial class LoaderPage : Page
             else
             {
                 var intent = await client!.CreateToolDownloadIntentAsync(site!.Value.FileId);
-                var (imported, message) = await kernel.ImportAsync(intent.Url, site.Value.VersionId);
+                var (imported, message) = await kernel.ImportAsync(
+                    intent.Url,
+                    site.Value.VersionId,
+                    sha256: site.Value.Sha256);
                 if (imported is null)
                 {
                     Report(false, message);

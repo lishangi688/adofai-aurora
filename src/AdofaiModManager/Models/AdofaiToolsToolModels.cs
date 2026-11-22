@@ -64,7 +64,14 @@ public sealed class ToolVersion
 
     public string? Changelog { get; set; }
 
+    /// <summary>旧版 API 的单个文件；新版同时返回 files，保留这个字段兼容。</summary>
     public ToolVersionFile? File { get; set; }
+
+    /// <summary>同一版本可包含多个文件（新版站点）。</summary>
+    public List<ToolVersionFile> Files { get; set; } = [];
+
+    /// <summary>主要文件：优先 file，其次 files 的第一项。</summary>
+    public ToolVersionFile? PrimaryFile => File ?? Files.FirstOrDefault();
 }
 
 public sealed class ToolVersionFile
@@ -76,4 +83,9 @@ public sealed class ToolVersionFile
     public long Size { get; set; }
 
     public string? DownloadUrl { get; set; }
+
+    /// <summary>服务端计算的 SHA256；旧条目可能为 null。</summary>
+    public string? Sha256 { get; set; }
+
+    public int DownloadCount { get; set; }
 }

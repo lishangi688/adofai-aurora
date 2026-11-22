@@ -39,7 +39,8 @@ public sealed record AppUpdateInfo(
     string? PortableUrl = null,
     string? InstallerUrl = null,
     bool IsCombinedPackage = false,
-    bool IsLocalTestPackage = false)
+    bool IsLocalTestPackage = false,
+    string? Sha256 = null)
 {
     /// <summary>按当前形态（安装版 / 绿色版）挑一个合适的下载地址。</summary>
     public string? UrlFor(AppDistribution distribution)
@@ -340,14 +341,16 @@ public static class AppUpdateService
             // 拿到一个 24 小时有效的签名直链，浏览器无需 key 即可下载。
             string? downloadUrl = null;
             string? fileName = null;
+            string? sha256 = null;
 
             var newest = detail.Versions
                 .Where(v => !string.IsNullOrWhiteSpace(v.VersionId))
                 .OrderByDescending(v => v.VersionId!, Comparer<string>.Create(KernelService.CompareVersions))
                 .FirstOrDefault();
 
-            if (newest?.File is { } file && !string.IsNullOrWhiteSpace(file.Id))
+            if (newest?.PrimaryFile is { } file && !string.IsNullOrWhiteSpace(file.Id))
             {
+                sha256 = file.Sha256;
                 try
                 {
                     var intent = await client.CreateToolDownloadIntentAsync(file.Id, ct);
@@ -369,7 +372,8 @@ public static class AppUpdateService
                 baseUrl,
                 DownloadUrl: downloadUrl,
                 FileName: fileName,
-                IsCombinedPackage: true);
+                IsCombinedPackage: true,
+                Sha256: sha256);
         }
         catch
         {

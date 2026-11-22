@@ -205,6 +205,11 @@ public sealed class ModVersionFile
 
     public string? DownloadUrl { get; set; }
 
+    /// <summary>服务端计算的 SHA256；旧条目可能为 null。</summary>
+    public string? Sha256 { get; set; }
+
+    public int DownloadCount { get; set; }
+
     public string SizeLabel => Size <= 0
         ? string.Empty
         : Size >= 1048576

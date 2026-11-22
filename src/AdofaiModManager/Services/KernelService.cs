@@ -332,7 +332,8 @@ public sealed class KernelService
         string source,
         string? version = null,
         CancellationToken ct = default,
-        bool allowLocalFile = false)
+        bool allowLocalFile = false,
+        string? sha256 = null)
     {
         if (string.IsNullOrWhiteSpace(source))
         {
@@ -343,6 +344,7 @@ public sealed class KernelService
         {
             Version = string.IsNullOrWhiteSpace(version) ? "imported" : version.Trim(),
             DownloadUrl = source.Trim(),
+            Sha256 = sha256,
             Notes = "本地导入 / 手动指定",
         };
 

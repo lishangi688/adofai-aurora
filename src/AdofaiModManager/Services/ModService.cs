@@ -2,6 +2,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AdofaiModManager.Models;
 
@@ -660,6 +661,13 @@ public sealed class ModService
         }
     }
 
+    /// <summary>计算文件的 SHA256（大写十六进制；站点返回值可能大小写不同，比较时忽略大小写）。</summary>
+    public static string ComputeSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
     private static void Restore(List<(string Original, string Backup)> moved)
     {
         foreach (var (original, backup) in moved)
@@ -764,12 +772,14 @@ public sealed class ModService
     /// cacheName 不为空时，安装成功后会把这个 zip 留在本地缓存里（离线可重装）。
     /// expectedId 见 <see cref="InstallFromZip"/>。
     /// </summary>
+    /// <param name="expectedSha256">站点文件元数据里的 SHA256；不为空时下载后必须一致。</param>
     public async Task<InstallResult> InstallFromUrlAsync(
         string url,
         IProgress<int>? progress = null,
         CancellationToken ct = default,
         string? cacheName = null,
-        string? expectedId = null)
+        string? expectedId = null,
+        string? expectedSha256 = null)
     {
         // 下载阶段也要占住：否则两个安装可以同时下载，先下完的那个装到一半时另一个也开始装
         if (!OperationGate.Wait(0))
@@ -779,7 +789,7 @@ public sealed class ModService
 
         try
         {
-            return await InstallFromUrlCoreAsync(url, progress, ct, cacheName, expectedId);
+            return await InstallFromUrlCoreAsync(url, progress, ct, cacheName, expectedId, expectedSha256);
         }
         finally
         {
@@ -792,7 +802,8 @@ public sealed class ModService
         IProgress<int>? progress,
         CancellationToken ct,
         string? cacheName,
-        string? expectedId)
+        string? expectedId,
+        string? expectedSha256)
     {
         using var criticalWork = CriticalWork.Begin("下载并安装 Mod");
 
@@ -826,6 +837,17 @@ public sealed class ModService
                             progress?.Report(percent);
                         }
                     }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedSha256))
+            {
+                var actual = ComputeSha256(temp);
+                if (!string.Equals(actual, expectedSha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return new InstallResult(
+                        false,
+                        $"校验失败：下载的文件与站点公布的 SHA256 不一致，已取消安装（文件可能被篡改或下载不完整）。");
                 }
             }
 
