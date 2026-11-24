@@ -40,6 +40,16 @@ public partial class MainWindow : FluentWindow
 
         RootNavigation.Navigate(page, null);
 
+#if DEBUG
+        // 调试用：AURORA_PREVIEW_FILE_CHOICE=1 启动时直接打开「多文件选择」窗口看样式
+        if (Environment.GetEnvironmentVariable("AURORA_PREVIEW_FILE_CHOICE") == "1")
+        {
+            await Task.Delay(700);
+            Views.Dialogs.ModFileChoiceDialog.ShowPreview(this);
+            return;
+        }
+#endif
+
         if (AppServices.Settings.Settings.CheckUpdatesOnStartup)
         {
             // 先查 Aurora 自身（GitHub + 资源站，通常两秒内出结果），提示条能立刻出现；

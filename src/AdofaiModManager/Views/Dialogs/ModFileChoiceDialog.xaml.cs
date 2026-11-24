@@ -20,9 +20,10 @@ public partial class ModFileChoiceDialog : FluentWindow
     {
         InitializeComponent();
 
+        ModNameText.Text = modName;
         HeadlineText.Text = string.IsNullOrWhiteSpace(version)
-            ? $"{modName}：请选择要更新的文件"
-            : $"{modName} → {version}：请选择要更新的文件";
+            ? "请选择要安装的文件"
+            : $"更新到 {version}，请选择要安装的文件";
 
         FileList.ItemsSource = files;
 
@@ -49,6 +50,28 @@ public partial class ModFileChoiceDialog : FluentWindow
 
         return Regex.Replace(key, Regex.Escape(versionId.Trim()), string.Empty, RegexOptions.IgnoreCase);
     }
+
+#if DEBUG
+    /// <summary>
+    /// 调试用：不联网、直接弹出这个窗口看样式。
+    /// 启动时设置环境变量 AURORA_PREVIEW_FILE_CHOICE=1 即可自动打开。
+    /// </summary>
+    public static void ShowPreview(Window? owner = null)
+    {
+        var files = new List<ModVersionFile>
+        {
+            new() { Id = "preview-1", Name = "ADOFAI.EditorTweaks.ChartRendering-1.1.1.zip", Size = 314_572 },
+            new() { Id = "preview-2", Name = "ADOFAI.EditorTweaks.ChartRendering-1.1.1-Full.zip", Size = 88_080_000 },
+        };
+
+        var dialog = new ModFileChoiceDialog("ADOFAI.EditorTweaks.ChartRendering", "1.1.1", files, null)
+        {
+            Owner = owner ?? Application.Current?.MainWindow,
+        };
+
+        dialog.ShowDialog();
+    }
+#endif
 
     private void Ok_Click(object sender, RoutedEventArgs e)
     {

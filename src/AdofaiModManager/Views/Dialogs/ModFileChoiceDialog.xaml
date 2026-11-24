@@ -5,7 +5,7 @@
                 Title="选择要更新的文件"
                 Icon="pack://application:,,,/Assets/app.ico"
                 Width="560"
-                Height="430"
+                SizeToContent="Height"
                 ResizeMode="NoResize"
                 ShowInTaskbar="False"
                 WindowStartupLocation="CenterOwner"
@@ -25,50 +25,119 @@
             </ui:TitleBar.Icon>
         </ui:TitleBar>
 
-        <Grid Grid.Row="1" Margin="24,8,24,20">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-
-            <TextBlock x:Name="HeadlineText"
+        <StackPanel Grid.Row="1" Margin="24,8,24,20">
+            <TextBlock x:Name="ModNameText"
                        FontSize="16"
                        FontWeight="SemiBold"
                        TextWrapping="Wrap" />
-            <TextBlock Grid.Row="1"
-                       Margin="0,8,0,12"
+            <TextBlock x:Name="HeadlineText"
+                       Margin="0,4,0,0"
+                       FontSize="13"
+                       Opacity="0.85"
+                       TextWrapping="Wrap" />
+            <TextBlock Margin="0,10,0,0"
                        FontSize="12"
-                       Opacity="0.7"
+                       Opacity="0.6"
                        TextWrapping="Wrap"
                        Text="同一个版本提供多个文件时，请选择要安装的那一个。选择会记住，下次更新同名变体会自动预选。" />
 
             <ListBox x:Name="FileList"
-                     Grid.Row="2"
+                     Margin="0,14,0,0"
+                     MinHeight="72"
+                     MaxHeight="330"
                      SelectionMode="Single"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      ScrollViewer.VerticalScrollBarVisibility="Auto">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0,0,0,8" />
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Margin="4,6">
-                            <TextBlock FontWeight="SemiBold" Text="{Binding Name, Mode=OneWay}" />
-                            <TextBlock Margin="0,3,0,0"
-                                       FontSize="12"
-                                       Opacity="0.7">
-                                <Run Text="{Binding SizeLabel, Mode=OneWay}" />
-                            </TextBlock>
-                        </StackPanel>
+                        <Border BorderThickness="1" CornerRadius="8" Padding="14,11">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource AmmCardBackgroundBrush}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource AmmCardBorderBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                     Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource AmmCardHoverBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                     Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource AmmCardSelectedBrush}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0"
+                                           Grid.Column="0"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding Name, Mode=OneWay}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Row="1"
+                                           Grid.Column="0"
+                                           Margin="0,4,0,0"
+                                           FontSize="12"
+                                           Opacity="0.7"
+                                           Text="{Binding SizeLabel, Mode=OneWay}" />
+
+                                <TextBlock Grid.Row="0"
+                                           Grid.RowSpan="2"
+                                           Grid.Column="1"
+                                           Margin="12,0,0,0"
+                                           VerticalAlignment="Center"
+                                           FontFamily="Segoe UI Symbol"
+                                           FontSize="15"
+                                           Text="✓">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </Border>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
 
-            <StackPanel Grid.Row="3"
-                        Margin="0,16,0,0"
+            <StackPanel Margin="0,18,0,0"
                         HorizontalAlignment="Right"
                         Orientation="Horizontal">
                 <ui:Button Margin="0,0,8,0" Click="Cancel_Click" Content="取消" />
                 <ui:Button Appearance="Primary" Click="Ok_Click" Content="更新" />
             </StackPanel>
-        </Grid>
+        </StackPanel>
     </Grid>
 </ui:FluentWindow>
