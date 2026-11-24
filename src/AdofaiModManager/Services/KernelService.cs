@@ -437,6 +437,24 @@ public sealed class KernelService
 
     private static string NormalizeVersion(string? value) => string.Join('.', ParseVersion(value));
 
+    /// <summary>
+    /// 界面显示用：四段版本号且末段为 0 时去掉末段（0.33.3.0 → 0.33.3），
+    /// 避免和 kernel.json 里的 0.33.4 看起来不是一套编号。
+    /// </summary>
+    public static string ToDisplayVersion(string? value)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (text.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var parts = text.Split('.');
+        return parts.Length == 4 && parts[3] == "0"
+            ? string.Join('.', parts, 0, 3)
+            : text;
+    }
+
     private static int[] ParseVersion(string? value)    {
         var result = new int[4];
         if (string.IsNullOrWhiteSpace(value))

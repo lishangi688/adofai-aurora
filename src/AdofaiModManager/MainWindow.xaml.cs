@@ -50,6 +50,13 @@ public partial class MainWindow : FluentWindow
         }
 #endif
 
+        // 内置 UMM 内核比已部署的新时，在顶部给出提示（不联网，读本地文件，很快）
+        // UMM 环境页自己有更醒目的提示，那里不重复显示
+        if (page != typeof(LoaderPage))
+        {
+            RefreshKernelUpdateBar();
+        }
+
         if (AppServices.Settings.Settings.CheckUpdatesOnStartup)
         {
             // 先查 Aurora 自身（GitHub + 资源站，通常两秒内出结果），提示条能立刻出现；
@@ -60,6 +67,9 @@ public partial class MainWindow : FluentWindow
     }
 
     private AppUpdateInfo? _appUpdate;
+
+    /// <summary>内置于当前版本、且比已部署的 UMM 内核更新的版本号（有更新时才非空）。</summary>
+    private string? _kernelUpdateVersion;
 
     /// <summary>启动时静默检查 Aurora 自身有没有新版本（有新版本才显示提示条）。</summary>
     private async Task RunStartupAppUpdateCheckAsync()
@@ -168,6 +178,66 @@ public partial class MainWindow : FluentWindow
         AppUpdateBar.Visibility = Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// 内置 UMM 内核比已部署的新时，在顶部显示提示条。
+    /// 只读本地文件（内核 json + 已部署 dll 的程序集版本），不联网。
+    /// </summary>
+    private void RefreshKernelUpdateBar()
+    {
+        try
+        {
+            var gamePath = AppServices.Settings.Settings.GamePath;
+            if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+            {
+                KernelUpdateBar.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var kernel = new KernelService(new LoaderService(gamePath));
+            var deployed = kernel.GetDeployedVersion();
+            var bundled = kernel.GetBundled();
+
+            // 没部署加载器时不提示：首次安装走首次向导或「安装 / 修复加载器」
+            if (deployed is null || bundled is null ||
+                KernelService.CompareVersions(bundled.Version, deployed) <= 0 ||
+                string.Equals(
+                    AppServices.Settings.Settings.SkippedKernelVersion,
+                    bundled.Version,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                KernelUpdateBar.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            _kernelUpdateVersion = bundled.Version;
+            KernelUpdateText.Text =
+                $"UMM 内核有新版本 v{KernelService.ToDisplayVersion(bundled.Version)}"
+                + $"（当前 v{KernelService.ToDisplayVersion(deployed)}）　·　更新后重启游戏生效";
+            KernelUpdateBar.Visibility = Visibility.Visible;
+        }
+        catch
+        {
+            // 读不到就当作没有更新，不影响使用
+            KernelUpdateBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void OpenKernelPage_Click(object sender, RoutedEventArgs e)
+    {
+        RootNavigation.Navigate(typeof(LoaderPage), null);
+    }
+
+    private void SkipKernelVersion_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_kernelUpdateVersion))
+        {
+            AppServices.Settings.Settings.SkippedKernelVersion = _kernelUpdateVersion;
+            AppServices.Settings.Save();
+        }
+
+        KernelUpdateBar.Visibility = Visibility.Collapsed;
+    }
+
     private async Task RunStartupUpdateCheckAsync()
     {
         try
@@ -224,6 +294,16 @@ public partial class MainWindow : FluentWindow
 
             AppServices.Settings.Settings.LastPage = pageType.Name;
             AppServices.Settings.Save();
+
+            // 顶部内核提示只在本页之外显示：UMM 环境页自己有更醒目的更新提示，避免重复
+            if (pageType == typeof(LoaderPage))
+            {
+                KernelUpdateBar.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                RefreshKernelUpdateBar();
+            }
         }
     }
 

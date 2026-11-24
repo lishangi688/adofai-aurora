@@ -9,6 +9,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -21,13 +22,47 @@
                        Text="检测和管理游戏里的 mod 加载器（原本由 UnityModManager 负责注入）。" />
         </StackPanel>
 
+        <!-- 内置内核比已部署的新时，直接给出一键更新 -->
+        <Border x:Name="KernelUpdateBar"
+                Grid.Row="1"
+                Margin="0,12,0,0"
+                Padding="14,10"
+                Background="{DynamicResource AmmCardBackgroundBrush}"
+                BorderBrush="{DynamicResource AmmCardBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:SymbolIcon Margin="0,0,10,0" VerticalAlignment="Center" Symbol="ArrowSync24" />
+                    <TextBlock x:Name="KernelUpdateText"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ui:Button x:Name="UpdateKernelButton"
+                           Grid.Column="1"
+                           Margin="12,0,0,0"
+                           VerticalAlignment="Center"
+                           Appearance="Primary"
+                           Click="UpdateKernelNow_Click"
+                           Content="立即更新内核"
+                           Icon="{ui:SymbolIcon Symbol=ArrowSync24}" />
+            </Grid>
+        </Border>
+
         <ui:InfoBar x:Name="StatusBar"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     Margin="0,12,0,0"
                     IsClosable="True"
                     IsOpen="False" />
 
-        <ScrollViewer svc:SmoothScroll.IsEnabled="True" Grid.Row="2" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer svc:SmoothScroll.IsEnabled="True" Grid.Row="3" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
             <StackPanel>
             <Border Padding="20"
                     Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"

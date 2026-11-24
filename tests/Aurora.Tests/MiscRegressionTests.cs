@@ -118,3 +118,17 @@ public sealed class ExternalLinksTests
         public void VariantKey_DoesNotChangeNamesWithoutVersion() =>
             Assert.Equal("AETC-Full.zip", ModFileChoiceDialog.VariantKey("AETC-Full.zip", null));
     }
+
+    /// <summary>界面显示内核版本：四段且末段为 0 时去掉末段（0.33.3.0 → 0.33.3）。</summary>
+    public sealed class KernelVersionDisplayTests
+    {
+        [Theory]
+        [InlineData("0.33.3.0", "0.33.3")]
+        [InlineData("0.33.4.0", "0.33.4")]
+        [InlineData("0.33.4", "0.33.4")]
+        [InlineData("0.33", "0.33")]
+        [InlineData("0.32.5.1", "0.32.5.1")]
+        [InlineData("", "")]
+        public void ToDisplayVersion_TrimsOnlyTrailingZeroSegment(string input, string expected) =>
+            Assert.Equal(expected, KernelService.ToDisplayVersion(input));
+    }

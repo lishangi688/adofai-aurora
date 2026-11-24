@@ -18,6 +18,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -78,8 +79,53 @@
             </Grid>
         </Border>
 
+        <!-- 内置 UMM 内核比已部署的新时提示（可关闭；「忽略此版本」后同一版本不再提示） -->
+        <Border x:Name="KernelUpdateBar"
+                Grid.Row="2"
+                Margin="12,8,12,0"
+                Padding="14,10"
+                Background="{DynamicResource AmmCardBackgroundBrush}"
+                BorderBrush="{DynamicResource AmmCardBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <ui:SymbolIcon Margin="0,0,10,0"
+                                   VerticalAlignment="Center"
+                                   Symbol="Wrench24" />
+                    <TextBlock x:Name="KernelUpdateText"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1"
+                            Margin="12,0,0,0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <ui:Button x:Name="OpenKernelPageButton"
+                               Appearance="Primary"
+                               Click="OpenKernelPage_Click"
+                               Content="去更新"
+                               Icon="{ui:SymbolIcon Symbol=ArrowSync24}"
+                               ToolTip="打开「UMM 环境」页面，一键更新内置内核" />
+                    <ui:Button x:Name="SkipKernelVersionButton"
+                               Margin="8,0,0,0"
+                               Click="SkipKernelVersion_Click"
+                               Content="忽略此版本" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <ui:NavigationView x:Name="RootNavigation"
-                           Grid.Row="2"
+                           Grid.Row="3"
                            IsBackButtonVisible="Collapsed"
                            IsPaneToggleVisible="True"
                            OpenPaneLength="220"

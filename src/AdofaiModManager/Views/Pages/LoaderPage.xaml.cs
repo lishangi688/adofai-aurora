@@ -71,8 +71,8 @@ public partial class LoaderPage : Page
             $"游戏架构：{(status.Is64BitGame ? "64 位" : "32 位")}",
             $"Mods 目录：{(Directory.Exists(Path.Combine(loader.GamePath, "Mods")) ? "存在" : "不存在")}",
             string.Empty,
-            $"内置内核：{(bundled is null ? "缺失" : bundled.Version)}",
-            $"已部署内核：{deployed ?? "未部署"}",
+            $"内置内核：{(bundled is null ? "缺失" : KernelService.ToDisplayVersion(bundled.Version))}",
+            $"已部署内核：{(deployed is null ? "未部署" : KernelService.ToDisplayVersion(deployed))}",
         };
 
         if (kernels.Count > 1)
@@ -80,14 +80,20 @@ public partial class LoaderPage : Page
             lines.Add("本地内核包：" + string.Join("、", kernels.Select(k => $"{k.Version}({k.Source})")));
         }
 
-        // 内置内核比已部署的新时要明确提示：
-        // 以前只拿"资源站版本"和已部署版本比，而资源站上的内核归站长维护、不一定跟着更新，
-        // 于是软件自己升级了内置内核也不会提示。
+        // 内置内核比已部署的新时，用顶部提示条直接给「一键更新」：
+        // 以前只在详情文字里写一句「点安装 / 修复」，很容易被忽略。
+        // （资源站上的内核归站长维护、不一定跟着更新，所以必须拿内置版本比一次）
         if (bundled is not null && deployed is not null &&
             KernelService.CompareVersions(bundled.Version, deployed) > 0)
         {
-            lines.Add($"⚠ 内置内核 {bundled.Version} 比已部署的 {deployed} 新："
-                      + "点「安装 / 修复加载器」→「使用内置内核」即可更新。");
+            KernelUpdateText.Text =
+                $"内置内核有新版本 v{KernelService.ToDisplayVersion(bundled.Version)}"
+                + $"（当前 v{KernelService.ToDisplayVersion(deployed)}）　·　更新前会自动备份当前内核，可随时回退";
+            KernelUpdateBar.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            KernelUpdateBar.Visibility = Visibility.Collapsed;
         }
 
         if (status.IsInstalled)
@@ -122,6 +128,7 @@ public partial class LoaderPage : Page
         UninstallButton.IsEnabled = !_busy && hasAnything;
         RollbackButton.IsEnabled = !_busy && kernels.Count > 1;
         CheckUpdateButton.IsEnabled = !_busy;
+        UpdateKernelButton.IsEnabled = !_busy;
     }
 
     private void SetBusy(bool busy)
@@ -131,6 +138,7 @@ public partial class LoaderPage : Page
         UninstallButton.IsEnabled = !busy;
         RollbackButton.IsEnabled = !busy;
         CheckUpdateButton.IsEnabled = !busy;
+        UpdateKernelButton.IsEnabled = !busy;
     }
 
     private void Report(InstallResult result)
@@ -303,6 +311,28 @@ public partial class LoaderPage : Page
         catch (AdofaiToolsException ex)
         {
             Report(false, ex.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+            Refresh();
+        }
+    }
+
+    /// <summary>用内置内核一键更新（部署前会自动备份当前内核，可回退）。</summary>
+    private void UpdateKernelNow_Click(object sender, RoutedEventArgs e)
+    {
+        var loader = CreateLoader();
+        if (loader is null)
+        {
+            Report(false, "请先在「设置」里指定游戏目录。");
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            Report(new KernelBootstrapper(loader).InstallBundled());
         }
         finally
         {

@@ -48,6 +48,12 @@ public sealed class AppSettings
     public string? SkippedAppVersion { get; set; }
 
     /// <summary>
+    /// 用户选择「忽略此版本」的 UMM 内核版本号。
+    /// 内置内核升到更高版本后会重新提示。
+    /// </summary>
+    public string? SkippedKernelVersion { get; set; }
+
+    /// <summary>
     /// 检查更新时是否同时查询 GitHub。
     ///
     /// 开启（默认）：GitHub 更新通常比资源站快，能第一时间看到作者的新版；
